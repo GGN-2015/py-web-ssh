@@ -110,3 +110,32 @@ def test_locked_secrets_are_applied_server_side(tmp_path: Path, monkeypatch) -> 
     assert session is not None
     assert session.config.password == "server-password"
     assert session.config.private_key == "PRIVATE KEY TEXT"
+
+
+def test_algorithm_endpoint_lists_supported_runtime_algorithms() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/algorithms")
+    payload = response.json()
+
+    assert response.status_code == 200
+    groups = {group["id"]: group["algorithms"] for group in payload["groups"]}
+    for group in ["kex", "ciphers", "digests", "key_types", "pubkeys"]:
+        assert groups[group]
+
+
+def test_create_session_rejects_unsupported_disabled_algorithm(monkeypatch) -> None:
+    monkeypatch.setattr(app_module, "sessions", NoStartSessionManager(autostart_reaper=False))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/sessions",
+        json={
+            "host": "example.com",
+            "username": "root",
+            "disabled_algorithms": {"ciphers": ["definitely-not-a-cipher"]},
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Unsupported SSH algorithm selections" in response.json()["detail"]

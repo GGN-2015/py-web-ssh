@@ -77,3 +77,24 @@ def test_frontend_no_longer_exposes_agent_or_known_hosts_controls() -> None:
     for text in forbidden:
         assert text not in markup
         assert text not in script
+
+
+def test_frontend_exposes_algorithm_panel_and_disabled_algorithm_payload() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'id="algorithms-panel"' in markup
+    assert 'id="algorithm-groups"' in markup
+    assert 'fetch("/api/algorithms")' in script
+    assert "collectDisabledAlgorithms()" in script
+    assert "disabled_algorithms: collectDisabledAlgorithms()" in script
+
+
+def test_frontend_no_longer_exposes_legacy_algorithm_toggle() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    forbidden = ["legacy-algorithms", "legacyAlgorithms", "legacy_algorithms"]
+    for text in forbidden:
+        assert text not in markup
+        assert text not in script

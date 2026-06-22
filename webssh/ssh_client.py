@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from functools import lru_cache
 import hashlib
 import io
 import socket
@@ -15,6 +16,69 @@ from .models import ConnectRequest
 
 
 LogCallback = Callable[[str, str, str | None], None]
+AlgorithmSelections = dict[str, list[str] | tuple[str, ...] | set[str]]
+AlgorithmMap = dict[str, tuple[str, ...]]
+ALGORITHM_GROUPS = ("kex", "ciphers", "digests", "key_types", "pubkeys")
+ALGORITHM_GROUP_LABELS = {
+    "kex": "Key exchange",
+    "ciphers": "Ciphers",
+    "digests": "MACs / digests",
+    "key_types": "Server host keys",
+    "pubkeys": "Public key signatures",
+}
+BROAD_ALGORITHM_ORDER: AlgorithmMap = {
+    "kex": (
+        "curve25519-sha256@libssh.org",
+        "ecdh-sha2-nistp256",
+        "ecdh-sha2-nistp384",
+        "ecdh-sha2-nistp521",
+        "diffie-hellman-group16-sha512",
+        "diffie-hellman-group14-sha256",
+        "diffie-hellman-group-exchange-sha256",
+        "diffie-hellman-group14-sha1",
+        "diffie-hellman-group-exchange-sha1",
+        "diffie-hellman-group1-sha1",
+    ),
+    "ciphers": (
+        "aes128-ctr",
+        "aes192-ctr",
+        "aes256-ctr",
+        "aes128-gcm@openssh.com",
+        "aes256-gcm@openssh.com",
+        "aes128-cbc",
+        "aes192-cbc",
+        "aes256-cbc",
+        "3des-cbc",
+    ),
+    "digests": (
+        "hmac-sha2-256",
+        "hmac-sha2-512",
+        "hmac-sha1",
+        "hmac-sha1-96",
+        "hmac-md5",
+        "hmac-md5-96",
+    ),
+    "key_types": (
+        "ssh-ed25519",
+        "ecdsa-sha2-nistp256",
+        "ecdsa-sha2-nistp384",
+        "ecdsa-sha2-nistp521",
+        "rsa-sha2-512",
+        "rsa-sha2-256",
+        "ssh-rsa",
+        "ssh-dss",
+    ),
+    "pubkeys": (
+        "ssh-ed25519",
+        "ecdsa-sha2-nistp256",
+        "ecdsa-sha2-nistp384",
+        "ecdsa-sha2-nistp521",
+        "rsa-sha2-512",
+        "rsa-sha2-256",
+        "ssh-rsa",
+        "ssh-dss",
+    ),
+}
 
 
 @dataclass
@@ -65,13 +129,12 @@ def connect_ssh(
     confirm_host_key: HostKeyConfirmation | None = None,
     expected_host_key: HostKeyInfo | None = None,
 ) -> ConnectedClient:
-    """Open an SSH connection, including legacy algorithms Paramiko still supports."""
+    """Open an SSH connection with browser-selected Paramiko algorithms."""
 
     sock = socket.create_connection((config.host, config.port), timeout=config.timeout_seconds)
     try:
         transport = paramiko.Transport(sock, disabled_algorithms={})
-        if config.legacy_algorithms:
-            _enable_legacy_algorithms(transport, log)
+        _prepare_security_options(transport, config.disabled_algorithms, log)
 
         log("info", f"Starting SSH handshake with {config.host}:{config.port}.", None)
         transport.start_client(timeout=config.timeout_seconds)
@@ -105,80 +168,129 @@ def connect_ssh(
         raise
 
 
-def _enable_legacy_algorithms(transport: paramiko.Transport, log: LogCallback) -> None:
-    options = transport.get_security_options()
-    preferred = {
-        "kex": (
-            "curve25519-sha256@libssh.org",
-            "ecdh-sha2-nistp256",
-            "ecdh-sha2-nistp384",
-            "ecdh-sha2-nistp521",
-            "diffie-hellman-group16-sha512",
-            "diffie-hellman-group14-sha256",
-            "diffie-hellman-group-exchange-sha256",
-            "diffie-hellman-group14-sha1",
-            "diffie-hellman-group-exchange-sha1",
-            "diffie-hellman-group1-sha1",
-        ),
-        "ciphers": (
-            "aes128-ctr",
-            "aes192-ctr",
-            "aes256-ctr",
-            "aes128-gcm@openssh.com",
-            "aes256-gcm@openssh.com",
-            "aes128-cbc",
-            "aes192-cbc",
-            "aes256-cbc",
-            "3des-cbc",
-        ),
-        "digests": (
-            "hmac-sha2-256",
-            "hmac-sha2-512",
-            "hmac-sha1",
-            "hmac-sha1-96",
-            "hmac-md5",
-            "hmac-md5-96",
-        ),
-        "key_types": (
-            "ssh-ed25519",
-            "ecdsa-sha2-nistp256",
-            "ecdsa-sha2-nistp384",
-            "ecdsa-sha2-nistp521",
-            "rsa-sha2-512",
-            "rsa-sha2-256",
-            "ssh-rsa",
-            "ssh-dss",
-        ),
-        "pubkeys": (
-            "ssh-ed25519",
-            "ecdsa-sha2-nistp256",
-            "ecdsa-sha2-nistp384",
-            "ecdsa-sha2-nistp521",
-            "rsa-sha2-512",
-            "rsa-sha2-256",
-            "ssh-rsa",
-            "ssh-dss",
-        ),
+def supported_algorithms_payload() -> dict[str, object]:
+    algorithms = get_supported_algorithms()
+    return {
+        "groups": [
+            {
+                "id": group,
+                "label": ALGORITHM_GROUP_LABELS[group],
+                "algorithms": list(algorithms[group]),
+            }
+            for group in ALGORITHM_GROUPS
+        ]
     }
 
+
+@lru_cache(maxsize=1)
+def get_supported_algorithms() -> AlgorithmMap:
+    sock: socket.socket | None = None
+    peer: socket.socket | None = None
+    transport: paramiko.Transport | None = None
+    try:
+        sock, peer = socket.socketpair()
+        transport = paramiko.Transport(sock, disabled_algorithms={})
+        options = transport.get_security_options()
+        return {
+            group: _ordered_supported_algorithms(options, group)
+            for group in ALGORITHM_GROUPS
+        }
+    finally:
+        if transport is not None:
+            transport.close()
+        if peer is not None:
+            peer.close()
+        elif sock is not None:
+            sock.close()
+
+
+def validate_disabled_algorithms(disabled_algorithms: object) -> AlgorithmMap:
+    if disabled_algorithms in (None, ""):
+        return {}
+    if not isinstance(disabled_algorithms, dict):
+        raise ValueError("disabled_algorithms must be an object keyed by SSH algorithm group.")
+
+    supported = get_supported_algorithms()
+    normalized: AlgorithmMap = {}
+    errors: list[str] = []
+    for raw_group, raw_values in disabled_algorithms.items():
+        group = str(raw_group)
+        if group not in ALGORITHM_GROUPS:
+            errors.append(f"unknown group {group}")
+            continue
+        if raw_values in (None, ""):
+            continue
+        if not isinstance(raw_values, (list, tuple, set)):
+            errors.append(f"{group} must be a list")
+            continue
+
+        values: list[str] = []
+        for raw_value in raw_values:
+            value = str(raw_value).strip()
+            if not value:
+                continue
+            if value not in supported[group]:
+                errors.append(f"{group}:{value}")
+                continue
+            values.append(value)
+        if values:
+            normalized[group] = tuple(dict.fromkeys(values))
+
+    if errors:
+        raise ValueError("Unsupported SSH algorithm selections: " + ", ".join(errors))
+    return normalized
+
+
+def _prepare_security_options(
+    transport: paramiko.Transport,
+    disabled_algorithms: object,
+    log: LogCallback,
+) -> None:
+    options = transport.get_security_options()
+    disabled = validate_disabled_algorithms(disabled_algorithms)
+
     changed: list[str] = []
+    disabled_details: list[str] = []
     unavailable: list[str] = []
-    for attr, wanted in preferred.items():
-        current = _current_algorithms(options, attr)
+    for attr in ALGORITHM_GROUPS:
+        wanted = BROAD_ALGORITHM_ORDER[attr]
         supported = _supported_algorithms(options, attr)
-        wanted_supported = [item for item in wanted if item in supported]
         unavailable.extend(f"{attr}:{item}" for item in wanted if item not in supported)
-        merged = tuple(dict.fromkeys(wanted_supported + list(current)))
+        enabled = tuple(
+            item
+            for item in _ordered_supported_algorithms(options, attr)
+            if item not in disabled.get(attr, ())
+        )
+        if not enabled:
+            raise paramiko.SSHException(f"All SSH {attr} algorithms were disabled.")
         try:
-            _set_algorithms(options, attr, merged)
-            changed.append(f"{attr}={','.join(merged)}")
+            _set_algorithms(options, attr, enabled)
+            changed.append(f"{attr}={','.join(enabled)}")
         except Exception as exc:  # pragma: no cover - depends on Paramiko build/runtime.
             log("warning", f"Could not set SSH {attr} algorithms: {exc}", None)
+        if disabled.get(attr):
+            disabled_details.append(f"{attr}={','.join(disabled[attr])}")
 
     details = "\n".join(changed)
+    if disabled_details:
+        details += "\n\nDisabled by browser selection:\n" + "\n".join(disabled_details)
     if unavailable:
         details += "\n\nUnavailable in this Paramiko runtime:\n" + "\n".join(unavailable)
-    log("debug", "Paramiko security options prepared for broad legacy compatibility.", details)
+    log("debug", "Paramiko security options prepared with browser algorithm selections.", details)
+
+
+def _ordered_supported_algorithms(
+    options: paramiko.transport.SecurityOptions,
+    attr: str,
+) -> tuple[str, ...]:
+    current = _current_algorithms(options, attr)
+    supported = _supported_algorithms(options, attr)
+    ordered = (
+        *BROAD_ALGORITHM_ORDER[attr],
+        *current,
+        *sorted(supported),
+    )
+    return tuple(item for item in dict.fromkeys(ordered) if item in supported)
 
 
 def _current_algorithms(options: paramiko.transport.SecurityOptions, attr: str) -> tuple[str, ...]:

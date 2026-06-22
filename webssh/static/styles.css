@@ -187,7 +187,7 @@ label {
 
 .section-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -208,6 +208,13 @@ label {
   font-size: 15px;
 }
 
+.panel-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .stack {
   display: grid;
   gap: 10px;
@@ -224,8 +231,7 @@ label {
 }
 
 .checks {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
   gap: 8px;
 }
 
@@ -238,6 +244,52 @@ label {
 .checks input {
   width: auto;
   min-height: auto;
+}
+
+.algorithm-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.algorithm-group {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0c1116;
+  padding: 9px;
+}
+
+.algorithm-group h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.algorithm-options {
+  display: grid;
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.algorithm-options label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  color: var(--muted);
+  font-family: "Cascadia Mono", Consolas, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.algorithm-options input {
+  width: auto;
+  min-height: auto;
+  margin-top: 2px;
 }
 
 .button-row {

@@ -7,7 +7,7 @@
 - SSH 交互终端：Paramiko 后端 `invoke_shell`，xterm.js 前端实时交互。
 - 登录方式：密码、浏览器上传私钥、私钥口令、服务端本机默认 `~/.ssh` 密钥、免口令/none auth。
 - Host key 确认：不使用 `known_hosts` 校验；每次交互 SSH 连接都会在 xterm.js 终端里显示服务器 host key 指纹，并要求用户输入 `Y` 或 `N` 后才继续认证。
-- Legacy 兼容：启动时按当前 Paramiko 运行时能力尽量启用旧 KEX/Cipher/MAC/HostKey/Pubkey 算法，并在日志中列出不可用算法。
+- 算法控制：前端“算法”面板会列出当前服务端 Paramiko 运行时支持的全部 KEX/Cipher/MAC/HostKey/Pubkey 算法；默认全选，取消勾选后后端会在后续 SSH 连接中禁用对应算法，并在日志中列出实际启用和禁用的算法。
 - UUID 会话：创建会话后返回 UUID，WebSocket 断开后可用同 UUID 重连。
 - 会话回收：同一个 UUID 如果所有浏览器连接都断开并且 5 分钟内无人重连，服务端会主动断开 SSH 并清理内存缓存。
 - 终端恢复：服务端保存 SSH 输出流，浏览器定期回传 xterm serialize 快照；重连时先恢复快照，再补放快照之后的输出。
@@ -17,7 +17,7 @@
 - 启动锁定策略：支持 `--lock-host`、`--lock-username`、`--lock-pwd`、`--lock-private-key`，可从服务端强制绑定目标主机、用户名、密码和服务端侧私钥文件。前端会锁定或隐藏对应控件，后端仍会校验并覆盖敏感字段。
 - 中英双语：默认英文，网页和日志页都支持中英切换；语言选择会长期保存到 `py_web_ssh_lang` cookie。
 - 浏览器客户端 session：首次访问时服务端会分配独立的浏览器 session UUID，并写入 HttpOnly cookie；它与 SSH 会话 UUID 分离。
-- 左侧控制面板：连接、会话、文件三个栏目改为互斥折叠面板，一次最多展开一个，也可以全部折叠。
+- 左侧控制面板：连接、算法、会话、文件四个栏目改为互斥折叠面板，一次最多展开一个，也可以全部折叠。
 
 ## 安装
 
@@ -62,6 +62,7 @@ py-web-ssh --lock-private-key C:\secrets\id_ed25519
 ## API 概览
 
 - `GET /api/config` 查看非敏感的服务端公开配置和锁定状态。
+- `GET /api/algorithms` 查看当前服务端 Paramiko 支持的 SSH 算法列表。
 - `POST /api/sessions` 创建 SSH 会话。
 - `GET /api/sessions/{uuid}` 查看会话状态。
 - `GET /api/sessions/{uuid}/logs` 获取完整日志 JSON。

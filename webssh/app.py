@@ -24,6 +24,7 @@ from .models import ConnectRequest, CreateSessionResponse, FileTransferResponse
 from .runtime_config import add_runtime_lock_arguments, configure_runtime_locks
 from . import runtime_config as runtime_config_module
 from .session import SessionManager
+from .ssh_client import supported_algorithms_payload, validate_disabled_algorithms
 from .transfers import TransferManager
 
 
@@ -76,6 +77,11 @@ def public_config() -> JSONResponse:
     return JSONResponse(runtime_config_module.runtime_config.public_payload())
 
 
+@app.get("/api/algorithms")
+def algorithms() -> JSONResponse:
+    return JSONResponse(supported_algorithms_payload())
+
+
 @app.post("/api/auth/login")
 async def auth_login(request: Request) -> JSONResponse:
     payload = await request.json()
@@ -96,6 +102,13 @@ def logs_page(session_id: str) -> HTMLResponse:
 @app.post("/api/sessions", response_model=CreateSessionResponse)
 def create_session(config: ConnectRequest) -> CreateSessionResponse:
     locked_config = runtime_config_module.runtime_config.apply_to_connect_request(config)
+    try:
+        locked_config.disabled_algorithms = {
+            group: list(values)
+            for group, values in validate_disabled_algorithms(locked_config.disabled_algorithms).items()
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     session = sessions.create(locked_config)
     return CreateSessionResponse(
         session_id=session.id,

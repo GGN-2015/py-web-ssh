@@ -19,7 +19,7 @@ class ConnectRequest(BaseModel):
     private_key: str | None = None
     private_key_passphrase: str | None = None
     look_for_keys: bool = False
-    legacy_algorithms: bool = True
+    disabled_algorithms: dict[str, list[str]] = Field(default_factory=dict)
     term: str = Field(default="xterm-256color", min_length=1, max_length=64)
     size: TerminalSize = Field(default_factory=TerminalSize)
     timeout_seconds: float = Field(default=20.0, ge=3.0, le=120.0)

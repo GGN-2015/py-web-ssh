@@ -14,6 +14,7 @@ const uploadProgressText = document.querySelector("#upload-progress-text");
 const uploadProgressBar = document.querySelector("#upload-progress-bar");
 const cancelUploadButton = document.querySelector("#cancel-upload");
 const languageToggle = document.querySelector("#language-toggle");
+const algorithmGroupsElement = document.querySelector("#algorithm-groups");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
 const translations = {
@@ -23,6 +24,7 @@ const translations = {
     unlock: "Unlock",
     subtitle: "Web SSH client",
     connect: "Connect",
+    algorithms: "Algorithms",
     session: "Session",
     files: "Files",
     host: "Target host",
@@ -33,7 +35,14 @@ const translations = {
     privateKeyFile: "Private key file",
     privateKeyLocked: "Private key file is forced by the server.",
     privateKeyPassphrase: "Private key passphrase",
-    legacyAlgorithms: "Legacy algorithms",
+    algorithmHelp:
+      "All Paramiko-supported algorithms are allowed by default. Uncheck algorithms to disable them for new SSH connections.",
+    algorithmLoadFailed: "Could not load SSH algorithms.",
+    algorithmGroup_kex: "Key exchange",
+    algorithmGroup_ciphers: "Ciphers",
+    algorithmGroup_digests: "MACs / digests",
+    algorithmGroup_key_types: "Server host keys",
+    algorithmGroup_pubkeys: "Public key signatures",
     serverKeys: "Server local keys",
     reconnect: "Reconnect",
     disconnect: "Disconnect SSH",
@@ -82,6 +91,7 @@ const translations = {
     unlock: "解锁",
     subtitle: "Web SSH 客户端",
     connect: "连接",
+    algorithms: "算法",
     session: "会话",
     files: "文件",
     host: "目标服务器",
@@ -92,7 +102,13 @@ const translations = {
     privateKeyFile: "私钥文件",
     privateKeyLocked: "私钥文件已强制绑定",
     privateKeyPassphrase: "私钥口令",
-    legacyAlgorithms: "legacy 算法",
+    algorithmHelp: "默认允许当前 Paramiko 支持的全部算法。取消勾选后，新 SSH 连接会禁用对应算法。",
+    algorithmLoadFailed: "无法加载 SSH 算法列表。",
+    algorithmGroup_kex: "密钥交换",
+    algorithmGroup_ciphers: "加密算法",
+    algorithmGroup_digests: "MAC / 摘要",
+    algorithmGroup_key_types: "服务器主机密钥",
+    algorithmGroup_pubkeys: "公钥签名",
     serverKeys: "服务端本机密钥",
     reconnect: "重连",
     disconnect: "断开 SSH",
@@ -139,6 +155,7 @@ const translations = {
 
 let currentLanguage = readLanguageCookie();
 let runtimeConfig = { locks: {} };
+let algorithmCatalog = [];
 
 const term = new Terminal({
   cursorBlink: true,
@@ -219,7 +236,7 @@ document.querySelector("#connect-form").addEventListener("submit", async (event)
     private_key: privateKey,
     private_key_passphrase: valueOf("#private-key-passphrase"),
     look_for_keys: checked("#look-for-keys"),
-    legacy_algorithms: checked("#legacy-algorithms"),
+    disabled_algorithms: collectDisabledAlgorithms(),
     term: "xterm-256color",
     size: { cols: term.cols, rows: term.rows },
   };
@@ -259,6 +276,7 @@ pinForm.addEventListener("submit", async (event) => {
   pinGate.classList.add("hidden");
   setStatus(t("ready"));
   await loadRuntimeConfig();
+  await loadAlgorithms();
 });
 
 document.querySelector("#reconnect").addEventListener("click", () => {
@@ -491,6 +509,7 @@ async function checkPinGate() {
 async function initialize() {
   if (await checkPinGate()) {
     await loadRuntimeConfig();
+    await loadAlgorithms();
   }
 }
 
@@ -520,6 +539,75 @@ function applyRuntimeLocks(config) {
   document.querySelector("#private-key-file").disabled = privateKeyLocked;
   document.querySelector("#private-key-file").value = "";
   document.querySelector("#private-key-lock-note").hidden = !privateKeyLocked;
+}
+
+async function loadAlgorithms() {
+  const response = await fetch("/api/algorithms");
+  if (!response.ok) {
+    appendLogLine(t("algorithmLoadFailed"));
+    return;
+  }
+  const payload = await response.json();
+  algorithmCatalog = Array.isArray(payload.groups) ? payload.groups : [];
+  renderAlgorithmGroups();
+}
+
+function renderAlgorithmGroups() {
+  const previous = collectAlgorithmChecks();
+  algorithmGroupsElement.textContent = "";
+  for (const group of algorithmCatalog) {
+    const groupElement = document.createElement("section");
+    groupElement.className = "algorithm-group";
+
+    const heading = document.createElement("h3");
+    heading.textContent = algorithmGroupLabel(group);
+    groupElement.appendChild(heading);
+
+    const options = document.createElement("div");
+    options.className = "algorithm-options";
+    for (const algorithm of group.algorithms || []) {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = previous[group.id]?.[algorithm] ?? true;
+      input.dataset.algorithmGroup = group.id;
+      input.value = algorithm;
+
+      const name = document.createElement("span");
+      name.textContent = algorithm;
+      label.append(input, name);
+      options.appendChild(label);
+    }
+    groupElement.appendChild(options);
+    algorithmGroupsElement.appendChild(groupElement);
+  }
+}
+
+function algorithmGroupLabel(group) {
+  const key = `algorithmGroup_${group.id}`;
+  const translated = t(key);
+  return translated === key ? group.label || group.id : translated;
+}
+
+function collectAlgorithmChecks() {
+  const checks = {};
+  algorithmGroupsElement.querySelectorAll("input[data-algorithm-group]").forEach((input) => {
+    const group = input.dataset.algorithmGroup;
+    if (!checks[group]) checks[group] = {};
+    checks[group][input.value] = input.checked;
+  });
+  return checks;
+}
+
+function collectDisabledAlgorithms() {
+  const disabled = {};
+  algorithmGroupsElement.querySelectorAll("input[data-algorithm-group]").forEach((input) => {
+    if (input.checked) return;
+    const group = input.dataset.algorithmGroup;
+    if (!disabled[group]) disabled[group] = [];
+    disabled[group].push(input.value);
+  });
+  return disabled;
 }
 
 function lockTextInput(selector, lock) {
@@ -701,6 +789,9 @@ function applyLanguage(language) {
   setLanguageCookie(currentLanguage);
   if (statusElement.getAttribute("data-i18n") === "notConnected") {
     statusElement.textContent = t("notConnected");
+  }
+  if (algorithmCatalog.length) {
+    renderAlgorithmGroups();
   }
 }
 
