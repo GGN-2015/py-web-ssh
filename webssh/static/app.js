@@ -4,6 +4,10 @@ const statusElement = document.querySelector("#status");
 const sessionInput = document.querySelector("#session-id");
 const sessionLabel = document.querySelector("#session-label");
 const logsLink = document.querySelector("#logs-link");
+const pinGate = document.querySelector("#pin-gate");
+const pinForm = document.querySelector("#pin-form");
+const pinInput = document.querySelector("#pin-input");
+const pinError = document.querySelector("#pin-error");
 
 const term = new Terminal({
   cursorBlink: true,
@@ -50,6 +54,8 @@ if (activeSessionId) {
   sessionInput.value = activeSessionId;
   updateSessionUi(activeSessionId);
 }
+
+checkPinGate();
 
 window.addEventListener("resize", () => {
   fitAddon.fit();
@@ -98,6 +104,24 @@ document.querySelector("#connect-form").addEventListener("submit", async (event)
   sessionInput.value = activeSessionId;
   updateSessionUi(activeSessionId);
   connectWebSocket(activeSessionId);
+});
+
+pinForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  pinError.textContent = "";
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin: pinInput.value }),
+  });
+  if (!response.ok) {
+    pinError.textContent = "Invalid PIN.";
+    pinInput.select();
+    return;
+  }
+  pinInput.value = "";
+  pinGate.classList.add("hidden");
+  setStatus("Ready");
 });
 
 document.querySelector("#reconnect").addEventListener("click", () => {
@@ -183,11 +207,27 @@ function connectWebSocket(sessionId) {
   });
   socket.addEventListener("close", () => {
     if (ws !== socket) return;
-    setStatus("WebSocket 已断开，可重连");
+    setStatus("WebSocket closed; reconnect is available");
   });
   socket.addEventListener("error", () => {
     if (ws === socket) setStatus("WebSocket 错误");
   });
+}
+
+async function checkPinGate() {
+  const response = await fetch("/api/auth/status");
+  if (!response.ok) {
+    pinGate.classList.remove("hidden");
+    pinInput.focus();
+    return;
+  }
+  const status = await response.json();
+  if (status.enabled) {
+    pinGate.classList.remove("hidden");
+    pinInput.focus();
+  } else {
+    pinGate.classList.add("hidden");
+  }
 }
 
 async function handleMessage(message) {

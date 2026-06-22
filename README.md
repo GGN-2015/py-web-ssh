@@ -12,6 +12,7 @@
 - 终端恢复：服务端保存 SSH 输出流，浏览器定期回传 xterm serialize 快照；重连时先恢复快照，再补放快照之后的输出。
 - 日志页面：`/sessions/{uuid}/logs` 展示完整连接、认证、错误和文件传输日志。
 - 文件传输：优先 SFTP；SFTP 不可用时参考 `simple-ssh-copy` 思路，使用远端 `base64` shell 命令 fallback 上传/下载。
+- 可选 PIN 门禁：服务端传入 `--pin` 后，网页启动时必须先输入正确 PIN；验证成功后浏览器会保存加盐哈希 cookie，后端会保护 HTTP API、日志页面、文件接口和 WebSocket。
 
 ## 安装
 
@@ -34,6 +35,12 @@ uvicorn webssh.app:app --host 127.0.0.1 --port 8000
 ```
 
 打开 <http://127.0.0.1:8000>。
+
+启用 PIN：
+
+```bash
+py-web-ssh --pin 123456
+```
 
 前端默认从 jsDelivr 加载 xterm.js、fit addon 和 serialize addon。离线内网部署时，请把这些静态资源 vendoring 到 `webssh/static/` 并替换 `index.html` 里的 CDN 地址。
 

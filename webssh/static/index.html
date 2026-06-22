@@ -8,6 +8,17 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <div id="pin-gate" class="pin-gate" aria-live="polite">
+      <form id="pin-form" class="pin-box">
+        <h2>PIN required</h2>
+        <label>
+          PIN
+          <input id="pin-input" type="password" autocomplete="current-password" />
+        </label>
+        <button class="primary" type="submit">Unlock</button>
+        <p id="pin-error" class="pin-error"></p>
+      </form>
+    </div>
     <main class="app-shell">
       <aside class="sidebar">
         <header class="brand">

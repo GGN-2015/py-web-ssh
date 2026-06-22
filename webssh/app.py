@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import argparse
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
+from . import auth
+from .auth import add_pin_argument, configure_pin
 from .files import download_file, filename_for_download, upload_file
 from .models import ConnectRequest, CreateSessionResponse, FileTransferResponse
 from .session import SessionManager
@@ -16,15 +20,40 @@ from .session import SessionManager
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+PUBLIC_PATHS = {"/", "/api/auth/status", "/api/auth/login", "/favicon.ico"}
 
-app = FastAPI(title="py-web-ssh", version="0.1.0")
+app = FastAPI(title="py-web-ssh", version=__version__)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 sessions = SessionManager()
+
+
+@app.middleware("http")
+async def require_pin_cookie(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/static/") or path in PUBLIC_PATHS or auth.pin_auth.is_request_authorized(request):
+        return await call_next(request)
+    return JSONResponse({"detail": "PIN authentication required."}, status_code=401)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/api/auth/status")
+def auth_status() -> JSONResponse:
+    return JSONResponse(auth.pin_auth.status_payload())
+
+
+@app.post("/api/auth/login")
+async def auth_login(request: Request) -> JSONResponse:
+    payload = await request.json()
+    pin = str(payload.get("pin", ""))
+    if not auth.pin_auth.verify_pin(pin):
+        raise HTTPException(status_code=401, detail="Invalid PIN.")
+    response = JSONResponse({"ok": True, "enabled": auth.pin_auth.enabled})
+    auth.pin_auth.set_cookie(response, pin)
+    return response
 
 
 @app.get("/sessions/{session_id}/logs", response_class=HTMLResponse)
@@ -121,6 +150,10 @@ def download(session_id: str, remote_path: str) -> StreamingResponse:
 
 @app.websocket("/ws/sessions/{session_id}")
 async def websocket_session(websocket: WebSocket, session_id: str) -> None:
+    if not auth.pin_auth.is_websocket_authorized(websocket):
+        await websocket.close(code=4401, reason="PIN authentication required")
+        return
+
     session = sessions.get(session_id)
     if session is None:
         await websocket.close(code=4404, reason="Session not found")
@@ -193,7 +226,14 @@ def _content_length(upload: UploadFile) -> int | None:
 def main() -> None:
     import uvicorn
 
-    uvicorn.run("webssh.app:app", host="127.0.0.1", port=8000, reload=False)
+    parser = argparse.ArgumentParser(prog="py-web-ssh")
+    parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind.")
+    parser.add_argument("--port", type=int, default=8000, help="Port to listen on.")
+    add_pin_argument(parser)
+    args = parser.parse_args()
+
+    configure_pin(args.pin)
+    uvicorn.run("webssh.app:app", host=args.host, port=args.port, reload=False)
 
 
 if __name__ == "__main__":
