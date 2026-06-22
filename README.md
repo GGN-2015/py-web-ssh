@@ -14,6 +14,7 @@
 - 日志页面：`/sessions/{uuid}/logs` 展示完整连接、认证、错误和文件传输日志。
 - 文件传输：参考 `simple-ssh-copy` 思路，不使用 SFTP/SCP；每次传输都按连接配置新建独立 SSH 连接，通过短小的远端 shell 命令分块追加 base64 临时文件，再在远端解码到临时数据文件并 `mv` 到最终路径，支持进度显示和取消。文件传输连接会校验服务器 host key 必须等于用户在交互终端里确认过的 host key。
 - 可选 PIN 门禁：服务端传入 `--pin` 后，网页启动时必须先输入正确 PIN；验证成功后浏览器会保存加盐哈希 cookie，后端会保护 HTTP API、日志页面、文件接口和 WebSocket。
+- 可定制品牌：默认网页标题为 `py-web-ssh`，副标题为 `Web SSH Client`；启动时可用 `--title` 和 `--subtitle` 设置。副标题右侧始终显示当前包版本 `(py-web-ssh vx.y.z)`，且标题和副标题不会跟随语言切换。
 - 启动锁定策略：支持 `--lock-host`、`--lock-username`、`--lock-pwd`、`--lock-private-key`，可从服务端强制绑定目标主机、用户名、密码和服务端侧私钥文件。前端会锁定或隐藏对应控件，后端仍会校验并覆盖敏感字段。
 - 中英双语：默认英文，网页和日志页都支持中英切换；语言选择会长期保存到 `py_web_ssh_lang` cookie。
 - 浏览器客户端 session：首次访问时服务端会分配独立的浏览器 session UUID，并写入 HttpOnly cookie；它与 SSH 会话 UUID 分离。
@@ -45,6 +46,12 @@ uvicorn webssh.app:app --host 0.0.0.0 --port 8022
 
 ```bash
 py-web-ssh --pin 123456
+```
+
+设置网页标题和副标题：
+
+```bash
+py-web-ssh --title "Ops SSH" --subtitle "Production Access"
 ```
 
 锁定连接目标或凭据：

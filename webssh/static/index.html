@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>py-web-ssh</title>
+    <title>__APP_TITLE__</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
@@ -23,8 +23,11 @@
       <aside class="sidebar">
         <header class="brand">
           <div>
-            <h1>py-web-ssh</h1>
-            <p data-i18n="subtitle">Web SSH client</p>
+            <h1 id="app-title">__APP_TITLE__</h1>
+            <p class="brand-subtitle">
+              <span id="app-subtitle">__APP_SUBTITLE__</span>
+              <small id="app-version">(py-web-ssh v__APP_VERSION__)</small>
+            </p>
           </div>
           <button id="language-toggle" class="language-toggle" type="button">中文</button>
         </header>

@@ -15,6 +15,9 @@ const uploadProgressBar = document.querySelector("#upload-progress-bar");
 const cancelUploadButton = document.querySelector("#cancel-upload");
 const languageToggle = document.querySelector("#language-toggle");
 const algorithmGroupsElement = document.querySelector("#algorithm-groups");
+const appTitleElement = document.querySelector("#app-title");
+const appSubtitleElement = document.querySelector("#app-subtitle");
+const appVersionElement = document.querySelector("#app-version");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
 const translations = {
@@ -22,7 +25,6 @@ const translations = {
     pinRequired: "PIN required",
     pin: "PIN",
     unlock: "Unlock",
-    subtitle: "Web SSH client",
     connect: "Connect",
     algorithms: "Algorithms",
     session: "Session",
@@ -89,7 +91,6 @@ const translations = {
     pinRequired: "需要 PIN",
     pin: "PIN",
     unlock: "解锁",
-    subtitle: "Web SSH 客户端",
     connect: "连接",
     algorithms: "算法",
     session: "会话",
@@ -520,7 +521,19 @@ async function loadRuntimeConfig() {
     return;
   }
   runtimeConfig = await response.json();
+  applyBranding(runtimeConfig);
   applyRuntimeLocks(runtimeConfig);
+}
+
+function applyBranding(config) {
+  const branding = config.branding || {};
+  const title = branding.title || "py-web-ssh";
+  const subtitle = branding.subtitle || "Web SSH Client";
+  const version = branding.version || "0.0.0";
+  document.title = title;
+  appTitleElement.textContent = title;
+  appSubtitleElement.textContent = subtitle;
+  appVersionElement.textContent = `(py-web-ssh v${version})`;
 }
 
 function applyRuntimeLocks(config) {

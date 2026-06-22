@@ -6,11 +6,17 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from . import __version__
 from .models import ConnectRequest
+
+DEFAULT_TITLE = "py-web-ssh"
+DEFAULT_SUBTITLE = "Web SSH Client"
 
 
 @dataclass(frozen=True)
 class RuntimeConfig:
+    title: str = DEFAULT_TITLE
+    subtitle: str = DEFAULT_SUBTITLE
     lock_host: str | None = None
     lock_username: str | None = None
     lock_password: str | None = None
@@ -26,6 +32,11 @@ class RuntimeConfig:
 
     def public_payload(self) -> dict[str, object]:
         return {
+            "branding": {
+                "title": self.title,
+                "subtitle": self.subtitle,
+                "version": __version__,
+            },
             "locks": {
                 "host": {"enabled": self.lock_host is not None, "value": self.lock_host},
                 "username": {"enabled": self.lock_username is not None, "value": self.lock_username},
@@ -63,6 +74,8 @@ runtime_config = RuntimeConfig()
 
 def configure_runtime_locks(
     *,
+    title: str | None = None,
+    subtitle: str | None = None,
     lock_host: str | None = None,
     lock_username: str | None = None,
     lock_password: str | None = None,
@@ -73,6 +86,8 @@ def configure_runtime_locks(
     if key_path is not None:
         _read_locked_private_key(key_path)
     runtime_config = RuntimeConfig(
+        title=_blank_to_default(title, DEFAULT_TITLE),
+        subtitle=_blank_to_default(subtitle, DEFAULT_SUBTITLE),
         lock_host=_blank_to_none(lock_host),
         lock_username=_blank_to_none(lock_username),
         lock_password=lock_password if lock_password is not None else None,
@@ -81,6 +96,18 @@ def configure_runtime_locks(
 
 
 def add_runtime_lock_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--title",
+        default=None,
+        metavar="TITLE",
+        help="Set the web UI title. Defaults to py-web-ssh.",
+    )
+    parser.add_argument(
+        "--subtitle",
+        default=None,
+        metavar="SUBTITLE",
+        help="Set the web UI subtitle. Defaults to Web SSH Client.",
+    )
     parser.add_argument(
         "--lock-host",
         default=None,
@@ -119,3 +146,10 @@ def _blank_to_none(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _blank_to_default(value: str | None, default: str) -> str:
+    if value is None:
+        return default
+    value = value.strip()
+    return value or default

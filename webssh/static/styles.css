@@ -146,6 +146,18 @@ label {
   color: var(--muted);
 }
 
+.brand-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.brand-subtitle small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .language-toggle {
   min-height: 30px;
   padding: 0 10px;

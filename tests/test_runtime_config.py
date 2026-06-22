@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 import webssh.app as app_module
 from webssh.app import app, build_arg_parser
+from webssh import __version__
 from webssh.runtime_config import configure_runtime_locks
 from webssh.session import SessionManager
 
@@ -55,6 +56,11 @@ def test_public_config_never_exposes_locked_password_or_private_key_path(tmp_pat
 
     payload = client.get("/api/config").json()
 
+    assert payload["branding"] == {
+        "title": "py-web-ssh",
+        "subtitle": "Web SSH Client",
+        "version": __version__,
+    }
     assert payload["locks"]["host"] == {"enabled": True, "value": "server.example.com"}
     assert payload["locks"]["username"] == {"enabled": True, "value": "deploy"}
     assert payload["locks"]["password"] == {"enabled": True}
@@ -62,6 +68,32 @@ def test_public_config_never_exposes_locked_password_or_private_key_path(tmp_pat
     assert "secret" not in str(payload)
     assert str(key_path) not in str(payload)
     assert "PRIVATE KEY TEXT" not in str(payload)
+
+
+def test_public_config_exposes_custom_branding() -> None:
+    configure_runtime_locks(title="Ops SSH", subtitle="Production Access")
+    client = TestClient(app)
+
+    payload = client.get("/api/config").json()
+
+    assert payload["branding"] == {
+        "title": "Ops SSH",
+        "subtitle": "Production Access",
+        "version": __version__,
+    }
+
+
+def test_index_renders_custom_branding_and_package_version() -> None:
+    configure_runtime_locks(title="Ops SSH", subtitle="Production Access")
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "<title>Ops SSH</title>" in response.text
+    assert '<h1 id="app-title">Ops SSH</h1>' in response.text
+    assert '<span id="app-subtitle">Production Access</span>' in response.text
+    assert f'<small id="app-version">(py-web-ssh v{__version__})</small>' in response.text
 
 
 def test_locked_host_and_username_reject_tampered_request(monkeypatch) -> None:

@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import argparse
 import base64
+from html import escape
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -58,8 +59,17 @@ async def require_pin_cookie(request: Request, call_next):
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+def index() -> HTMLResponse:
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    config = runtime_config_module.runtime_config
+    replacements = {
+        "__APP_TITLE__": escape(config.title, quote=True),
+        "__APP_SUBTITLE__": escape(config.subtitle, quote=True),
+        "__APP_VERSION__": escape(__version__, quote=True),
+    }
+    for placeholder, value in replacements.items():
+        html = html.replace(placeholder, value)
+    return HTMLResponse(html)
 
 
 @app.get("/api/auth/status")
@@ -367,6 +377,8 @@ def main() -> None:
 
     configure_pin(args.pin)
     configure_runtime_locks(
+        title=args.title,
+        subtitle=args.subtitle,
         lock_host=args.lock_host,
         lock_username=args.lock_username,
         lock_password=args.lock_pwd,

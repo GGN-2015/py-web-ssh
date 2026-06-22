@@ -48,6 +48,21 @@ def test_frontend_defaults_to_english_and_has_language_cookie() -> None:
     assert "zh-CN" in script
 
 
+def test_frontend_branding_comes_from_server_config_and_not_i18n() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert "<title>__APP_TITLE__</title>" in markup
+    assert 'id="app-title">__APP_TITLE__' in markup
+    assert 'id="app-subtitle">__APP_SUBTITLE__' in markup
+    assert 'id="app-version">(py-web-ssh v__APP_VERSION__)' in markup
+    assert 'data-i18n="subtitle"' not in markup
+    assert "subtitle:" not in script
+    assert "function applyBranding(config)" in script
+    assert "document.title = title;" in script
+    assert 'appVersionElement.textContent = `(py-web-ssh v${version})`;' in script
+
+
 def test_frontend_has_lock_aware_fields_without_sensitive_values() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")
