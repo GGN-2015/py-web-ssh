@@ -177,14 +177,16 @@ def upload(
     if tracker is None:
         tracker = transfers.create_upload(total_bytes or _content_length(file), remote_path)
     try:
-        method, transferred = upload_file_via_ssh(
+        method, transferred, final_remote_path = upload_file_via_ssh(
             session.config,
             file.file,
             remote_path,
             total_bytes or _content_length(file),
             expected_host_key,
+            original_filename=file.filename,
             cancel_event=tracker.cancel_event,
             progress=tracker.update_progress,
+            log=session.log,
         )
     except FileTransferCancelled as exc:
         message = f"File upload cancelled: {exc}"
@@ -195,14 +197,14 @@ def upload(
         tracker.fail(str(exc))
         session.log("error", f"File upload failed: {exc}", None)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    message = f"Uploaded {transferred} bytes to {remote_path} using {method}."
-    tracker.complete(transferred, message)
+    message = f"Uploaded {transferred} bytes to {final_remote_path} using {method}."
+    tracker.complete(transferred, message, remote_path=final_remote_path)
     session.log("info", message, None)
     return FileTransferResponse(
         ok=True,
         method=method,
         bytes_transferred=transferred,
-        remote_path=remote_path,
+        remote_path=final_remote_path,
         message=message,
         transfer_id=tracker.id,
     )

@@ -29,15 +29,28 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
     host_key = fake_host_key()
     session._confirmed_host_key = host_key
 
-    def fake_upload(config, source, remote_path, size, expected_host_key, cancel_event=None, progress=None):
+    def fake_upload(
+        config,
+        source,
+        remote_path,
+        size,
+        expected_host_key,
+        original_filename=None,
+        cancel_event=None,
+        progress=None,
+        log=None,
+    ):
         captured["config"] = config
         captured["source"] = source.read()
         captured["remote_path"] = remote_path
         captured["size"] = size
         captured["expected_host_key"] = expected_host_key
+        captured["original_filename"] = original_filename
         if progress:
             progress(len(captured["source"]))
-        return "shell", len(captured["source"])
+        if log:
+            log("info", "fake upload log", None)
+        return "shell", len(captured["source"]), "/tmp/example.txt"
 
     monkeypatch.setattr(app_module, "upload_file_via_ssh", fake_upload)
 
@@ -55,8 +68,10 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
     assert response.status_code == 200
     assert captured["config"] is session.config
     assert captured["expected_host_key"] is host_key
+    assert captured["original_filename"] == "example.txt"
     assert captured["source"] == b"hello"
     assert response.json()["method"] == "shell"
+    assert response.json()["remote_path"] == "/tmp/example.txt"
 
 
 def test_upload_requires_confirmed_host_key(monkeypatch) -> None:

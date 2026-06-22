@@ -8,7 +8,10 @@ import shlex
 import threading
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import BinaryIO, Protocol
+
+from paramiko.ssh_exception import SSHException
 
 from .models import ConnectRequest
 from .ssh_client import HostKeyInfo, connect_ssh
@@ -23,7 +26,17 @@ class FileTransferCancelled(FileTransferError):
 
 
 ProgressCallback = Callable[[int], None]
-UPLOAD_BLOCK_SIZE = 4096
+TransferLogCallback = Callable[[str, str, str | None], None]
+REQUESTED_UPLOAD_COMMAND_BYTES = 12 * 1024
+MIN_UPLOAD_COMMAND_BYTES = 64
+UPLOAD_BLOCK_SIZE = REQUESTED_UPLOAD_COMMAND_BYTES
+
+
+@dataclass(frozen=True)
+class UploadTarget:
+    requested_path: str
+    final_path: str
+    remote_dir: str
 
 
 class ShellClient(Protocol):
@@ -36,9 +49,11 @@ def upload_file_via_ssh(
     remote_path: str,
     size: int | None,
     expected_host_key: HostKeyInfo,
+    original_filename: str | None = None,
     cancel_event: threading.Event | None = None,
     progress: ProgressCallback | None = None,
-) -> tuple[str, int]:
+    log: TransferLogCallback | None = None,
+) -> tuple[str, int, str]:
     """Upload using only bounded SSH exec commands and POSIX-ish shell commands.
 
     This intentionally does not use SFTP or SCP. It follows the simple-ssh-copy
@@ -47,33 +62,45 @@ def upload_file_via_ssh(
     succeeds.
     """
 
-    connected = connect_ssh(
-        config,
-        lambda _level, _message, _details=None: None,
-        expected_host_key=expected_host_key,
-    )
+    command_size = probe_upload_command_size(config, expected_host_key, log)
+    connected = _connect_transfer_client(config, expected_host_key)
     client = connected.client
-    remote_dir = posixpath.dirname(remote_path) or "."
-    token = uuid.uuid4().hex
-    base64_temp_path = posixpath.join(remote_dir, f".py-web-ssh-upload-{token}.b64")
-    data_temp_path = posixpath.join(remote_dir, f".py-web-ssh-upload-{token}.tmp")
     transferred = 0
     completed = False
+    target = UploadTarget(remote_path, remote_path, posixpath.dirname(remote_path) or ".")
+    base64_temp_path = data_temp_path = ""
     try:
-        _run_remote_command(client, f"mkdir -p {shlex.quote(remote_dir)}")
-        _run_remote_command(client, f": > {shlex.quote(base64_temp_path)}")
+        target = _resolve_upload_target(client, remote_path, original_filename, command_size)
+        if log:
+            log(
+                "info",
+                "Resolved remote upload target.",
+                f"requested={target.requested_path}\nfinal={target.final_path}",
+            )
+
+        token = uuid.uuid4().hex
+        base64_temp_path = posixpath.join(target.remote_dir, f".py-web-ssh-upload-{token}.b64")
+        data_temp_path = posixpath.join(target.remote_dir, f".py-web-ssh-upload-{token}.tmp")
+
+        _run_bounded_remote_command(client, f"mkdir -p {shlex.quote(target.remote_dir)}", command_size)
+        _run_bounded_remote_command(client, f": > {shlex.quote(base64_temp_path)}", command_size)
         transferred = _write_base64_temp_file(
             client,
             source,
             base64_temp_path,
             cancel_event=cancel_event,
             progress=progress,
+            block_size=command_size,
         )
 
         if cancel_event and cancel_event.is_set():
             raise FileTransferCancelled("Upload cancelled by client.")
 
-        _run_remote_command(client, _decode_and_move_command(base64_temp_path, data_temp_path, remote_path))
+        _run_bounded_remote_command(
+            client,
+            _decode_and_move_command(base64_temp_path, data_temp_path, target.final_path),
+            command_size,
+        )
         completed = True
     except FileTransferCancelled:
         _cleanup_remote_upload(client, base64_temp_path, data_temp_path)
@@ -90,7 +117,200 @@ def upload_file_via_ssh(
 
     if size is not None and transferred != size:
         raise FileTransferError(f"Uploaded {transferred} bytes, expected {size} bytes.")
-    return "shell", transferred
+    return "shell", transferred, target.final_path
+
+
+def _connect_transfer_client(config: ConnectRequest, expected_host_key: HostKeyInfo):
+    return connect_ssh(
+        config,
+        lambda _level, _message, _details=None: None,
+        expected_host_key=expected_host_key,
+    )
+
+
+def probe_upload_command_size(
+    config: ConnectRequest,
+    expected_host_key: HostKeyInfo,
+    log: TransferLogCallback | None = None,
+    requested_size: int = REQUESTED_UPLOAD_COMMAND_BYTES,
+    minimum_size: int = MIN_UPLOAD_COMMAND_BYTES,
+) -> int:
+    def probe(candidate_size: int) -> None:
+        connected = _connect_transfer_client(config, expected_host_key)
+        client = connected.client
+        try:
+            _run_bounded_remote_command(
+                client,
+                _make_block_size_probe_command(candidate_size),
+                candidate_size,
+            )
+        finally:
+            _close_transport(client)
+
+    return _probe_upload_command_size(
+        probe,
+        requested_size=requested_size,
+        minimum_size=minimum_size,
+        log=log,
+    )
+
+
+def _probe_upload_command_size(
+    probe: Callable[[int], None],
+    requested_size: int = REQUESTED_UPLOAD_COMMAND_BYTES,
+    minimum_size: int = MIN_UPLOAD_COMMAND_BYTES,
+    log: TransferLogCallback | None = None,
+) -> int:
+    requested_size = max(1, requested_size)
+    minimum_size = max(1, minimum_size)
+    if log:
+        log(
+            "info",
+            "Probing SSH upload command size.",
+            f"requested={requested_size}\nminimum={minimum_size}",
+        )
+
+    try:
+        probe(requested_size)
+        selected = requested_size
+    except Exception as exc:
+        if not _is_upload_probe_size_failure(exc):
+            raise
+        _log_probe_failure(log, requested_size, exc)
+        low = minimum_size
+        high = requested_size - 1
+        selected = 0
+        while low <= high:
+            candidate = (low + high) // 2
+            try:
+                probe(candidate)
+            except Exception as candidate_exc:
+                if not _is_upload_probe_size_failure(candidate_exc):
+                    raise
+                _log_probe_failure(log, candidate, candidate_exc)
+                high = candidate - 1
+            else:
+                selected = candidate
+                low = candidate + 1
+
+        if selected < minimum_size:
+            raise FileTransferError(
+                f"SSH connection cannot carry upload commands smaller than {minimum_size} bytes"
+            ) from exc
+
+    if log:
+        log(
+            "info",
+            f"SSH upload command-size probe selected {selected} bytes.",
+            f"requested={requested_size}\nminimum={minimum_size}\nselected={selected}",
+        )
+    return selected
+
+
+def _log_probe_failure(
+    log: TransferLogCallback | None,
+    candidate_size: int,
+    exc: BaseException,
+) -> None:
+    if log:
+        log(
+            "debug",
+            f"SSH upload command-size probe failed at {candidate_size} bytes.",
+            str(exc),
+        )
+
+
+def _make_block_size_probe_command(block_size: int) -> str:
+    prefix = "true # "
+    filler_len = block_size - len(prefix.encode("utf-8"))
+    if filler_len < 0:
+        raise ValueError("Upload command size is too small for probe overhead.")
+    return prefix + ("x" * filler_len)
+
+
+def _is_upload_probe_size_failure(exc: BaseException) -> bool:
+    return _is_connection_reset_error(exc) or _is_upload_command_too_large_error(exc)
+
+
+def _is_connection_reset_error(exc: BaseException) -> bool:
+    if isinstance(exc, (EOFError, ConnectionResetError)):
+        return True
+    if isinstance(exc, SSHException) and str(exc).lower().rstrip(".") == "channel closed":
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) in (10054, 104):
+        return True
+
+    message = str(exc).lower()
+    if any(
+        text in message
+        for text in (
+            "socket is closed",
+            "channel closed",
+            "connection reset",
+            "connection aborted",
+            "broken pipe",
+            "eof",
+            "timed out",
+        )
+    ):
+        return True
+
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, BaseException) and _is_connection_reset_error(cause):
+        return True
+    context = getattr(exc, "__context__", None)
+    if isinstance(context, BaseException) and _is_connection_reset_error(context):
+        return True
+    return any(
+        _is_connection_reset_error(arg)
+        for arg in getattr(exc, "args", ())
+        if isinstance(arg, BaseException)
+    )
+
+
+def _is_upload_command_too_large_error(exc: BaseException) -> bool:
+    return "argument list too long" in str(exc).lower()
+
+
+def _resolve_upload_target(
+    client: ShellClient,
+    remote_path: str,
+    original_filename: str | None,
+    block_size: int,
+) -> UploadTarget:
+    status = _remote_path_status(client, remote_path, block_size)
+    if status == "directory":
+        remote_dir = remote_path.rstrip("/") or "/"
+        final_path = posixpath.join(remote_dir, _safe_upload_filename(original_filename))
+        return UploadTarget(requested_path=remote_path, final_path=final_path, remote_dir=remote_dir)
+
+    final_path = _final_file_path(remote_path)
+    remote_dir = posixpath.dirname(final_path) or "."
+    return UploadTarget(requested_path=remote_path, final_path=final_path, remote_dir=remote_dir)
+
+
+def _remote_path_status(client: ShellClient, remote_path: str, block_size: int) -> str:
+    quoted_path = shlex.quote(remote_path)
+    command = (
+        f"if [ -d {quoted_path} ]; then printf %s directory; "
+        f"elif [ -e {quoted_path} ]; then printf %s file; "
+        "else printf %s missing; fi"
+    )
+    output, _ = _run_bounded_remote_command(client, command, block_size)
+    status = output.decode("utf-8", errors="replace").strip()
+    if status not in {"directory", "file", "missing"}:
+        raise FileTransferError(f"Could not determine remote target type: {status!r}")
+    return status
+
+
+def _safe_upload_filename(original_filename: str | None) -> str:
+    normalized = (original_filename or "").replace("\\", "/").strip()
+    return posixpath.basename(normalized) or "upload.bin"
+
+
+def _final_file_path(remote_path: str) -> str:
+    stripped = remote_path.rstrip("/")
+    return stripped or remote_path
 
 
 def download_file_via_ssh(
@@ -271,13 +491,12 @@ def _cleanup_remote_upload(
     data_temp_path: str,
     raise_on_failure: bool = False,
 ) -> None:
+    paths = [path for path in (base64_temp_path, data_temp_path, f"{data_temp_path}.err") if path]
+    if not paths:
+        return
     command = "rm -f " + " ".join(
         shlex.quote(path)
-        for path in (
-            base64_temp_path,
-            data_temp_path,
-            f"{data_temp_path}.err",
-        )
+        for path in paths
     )
     try:
         _run_remote_command(client, command)

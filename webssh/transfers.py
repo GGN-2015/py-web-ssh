@@ -45,10 +45,12 @@ class TransferTracker:
             self._status.message = "Uploading."
             self._status.updated_at = datetime.now(timezone.utc)
 
-    def complete(self, bytes_transferred: int, message: str) -> None:
+    def complete(self, bytes_transferred: int, message: str, remote_path: str | None = None) -> None:
         with self._lock:
             self._status.state = "completed"
             self._status.bytes_transferred = bytes_transferred
+            if remote_path is not None:
+                self._status.remote_path = remote_path
             self._status.message = message
             self._status.updated_at = datetime.now(timezone.utc)
 
