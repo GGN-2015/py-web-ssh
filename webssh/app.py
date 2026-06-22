@@ -21,6 +21,8 @@ from .session import SessionManager
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 PUBLIC_PATHS = {"/", "/api/auth/status", "/api/auth/login", "/favicon.ico"}
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8022
 
 app = FastAPI(title="py-web-ssh", version=__version__)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -223,14 +225,18 @@ def _content_length(upload: UploadFile) -> int | None:
     return None
 
 
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="py-web-ssh")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="Host interface to bind.")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to listen on.")
+    add_pin_argument(parser)
+    return parser
+
+
 def main() -> None:
     import uvicorn
 
-    parser = argparse.ArgumentParser(prog="py-web-ssh")
-    parser.add_argument("--host", default="127.0.0.1", help="Host interface to bind.")
-    parser.add_argument("--port", type=int, default=8000, help="Port to listen on.")
-    add_pin_argument(parser)
-    args = parser.parse_args()
+    args = build_arg_parser().parse_args()
 
     configure_pin(args.pin)
     uvicorn.run("webssh.app:app", host=args.host, port=args.port, reload=False)

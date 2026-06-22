@@ -31,10 +31,10 @@ py-web-ssh
 或者：
 
 ```bash
-uvicorn webssh.app:app --host 127.0.0.1 --port 8000
+uvicorn webssh.app:app --host 0.0.0.0 --port 8022
 ```
 
-打开 <http://127.0.0.1:8000>。
+打开 <http://127.0.0.1:8022>。
 
 启用 PIN：
 
