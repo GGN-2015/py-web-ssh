@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from . import auth
 from .auth import add_pin_argument, configure_pin
+from .client_session import ensure_client_session_cookie
 from .files import download_file, filename_for_download, upload_file
 from .models import ConnectRequest, CreateSessionResponse, FileTransferResponse
 from .session import SessionManager
@@ -32,9 +33,18 @@ sessions = SessionManager()
 @app.middleware("http")
 async def require_pin_cookie(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/static/") or path in PUBLIC_PATHS or auth.pin_auth.is_request_authorized(request):
-        return await call_next(request)
-    return JSONResponse({"detail": "PIN authentication required."}, status_code=401)
+    if not (
+        path.startswith("/static/")
+        or path in PUBLIC_PATHS
+        or auth.pin_auth.is_request_authorized(request)
+    ):
+        response = JSONResponse({"detail": "PIN authentication required."}, status_code=401)
+        ensure_client_session_cookie(request, response)
+        return response
+
+    response = await call_next(request)
+    ensure_client_session_cookie(request, response)
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)

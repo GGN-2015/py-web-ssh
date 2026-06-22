@@ -8,6 +8,7 @@ const pinGate = document.querySelector("#pin-gate");
 const pinForm = document.querySelector("#pin-form");
 const pinInput = document.querySelector("#pin-input");
 const pinError = document.querySelector("#pin-error");
+const panelToggles = document.querySelectorAll(".panel-toggle");
 
 const term = new Terminal({
   cursorBlink: true,
@@ -56,6 +57,7 @@ if (activeSessionId) {
 }
 
 checkPinGate();
+bindControlPanels();
 
 window.addEventListener("resize", () => {
   fitAddon.fit();
@@ -184,6 +186,42 @@ document.querySelectorAll(".tab").forEach((button) => {
     }
   });
 });
+
+function bindControlPanels() {
+  panelToggles.forEach((button) => {
+    button.addEventListener("click", () => {
+      const panelId = button.getAttribute("aria-controls");
+      const isOpen = button.getAttribute("aria-expanded") === "true";
+      closeControlPanels();
+      if (!isOpen) {
+        openControlPanel(panelId);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-open-panel]").forEach((button) => {
+    button.addEventListener("click", () => {
+      openControlPanel(button.dataset.openPanel);
+    });
+  });
+}
+
+function openControlPanel(panelId) {
+  closeControlPanels();
+  const panel = document.querySelector(`#${panelId}`);
+  const toggle = document.querySelector(`[aria-controls="${panelId}"]`);
+  if (!panel || !toggle) return;
+  panel.hidden = false;
+  toggle.setAttribute("aria-expanded", "true");
+}
+
+function closeControlPanels() {
+  panelToggles.forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+    const panel = document.querySelector(`#${button.getAttribute("aria-controls")}`);
+    if (panel) panel.hidden = true;
+  });
+}
 
 function connectWebSocket(sessionId) {
   if (ws) {

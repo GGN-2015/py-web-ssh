@@ -136,7 +136,51 @@ label {
 
 .panel {
   display: grid;
-  gap: 12px;
+  gap: 8px;
+}
+
+.panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 38px;
+  font-weight: 700;
+}
+
+.panel-toggle::after {
+  content: "+";
+  color: var(--muted);
+}
+
+.panel-toggle[aria-expanded="true"]::after {
+  content: "-";
+}
+
+.panel-body {
+  display: grid;
+  gap: 10px;
+}
+
+.panel-body[hidden] {
+  display: none;
+}
+
+.section-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.section-tab {
+  min-height: 30px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.section-tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .panel h2 {

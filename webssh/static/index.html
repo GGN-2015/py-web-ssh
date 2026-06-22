@@ -26,9 +26,16 @@
           <p>Web SSH client</p>
         </header>
 
-        <section class="panel">
-          <h2>连接</h2>
-          <form id="connect-form" class="stack">
+        <section class="panel collapsible-panel">
+          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="connect-panel">
+            连接
+          </button>
+          <form id="connect-panel" class="stack panel-body" hidden>
+            <div class="section-tabs" aria-label="连接栏目">
+              <button class="section-tab active" type="button">连接</button>
+              <button class="section-tab" type="button" data-open-panel="session-panel">会话</button>
+              <button class="section-tab" type="button" data-open-panel="files-panel">文件</button>
+            </div>
             <label>
               目标服务器
               <input id="host" name="host" required autocomplete="off" placeholder="192.168.1.10" />
@@ -65,9 +72,16 @@
           </form>
         </section>
 
-        <section class="panel">
-          <h2>会话</h2>
-          <div class="stack">
+        <section class="panel collapsible-panel">
+          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="session-panel">
+            会话
+          </button>
+          <div id="session-panel" class="stack panel-body" hidden>
+            <div class="section-tabs" aria-label="会话栏目">
+              <button class="section-tab" type="button" data-open-panel="connect-panel">连接</button>
+              <button class="section-tab active" type="button">会话</button>
+              <button class="section-tab" type="button" data-open-panel="files-panel">文件</button>
+            </div>
             <label>
               UUID
               <input id="session-id" autocomplete="off" spellcheck="false" />
@@ -80,26 +94,35 @@
           </div>
         </section>
 
-        <section class="panel">
-          <h2>文件</h2>
-          <form id="upload-form" class="stack">
-            <label>
-              上传到远端路径
-              <input id="upload-path" placeholder="/tmp/file.txt" />
-            </label>
-            <label>
-              本地文件
-              <input id="upload-file" type="file" />
-            </label>
-            <button type="submit">上传</button>
-          </form>
-          <form id="download-form" class="stack compact">
-            <label>
-              下载远端路径
-              <input id="download-path" placeholder="/tmp/file.txt" />
-            </label>
-            <button type="submit">下载</button>
-          </form>
+        <section class="panel collapsible-panel">
+          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="files-panel">
+            文件
+          </button>
+          <div id="files-panel" class="panel-body" hidden>
+            <div class="section-tabs" aria-label="文件栏目">
+              <button class="section-tab" type="button" data-open-panel="connect-panel">连接</button>
+              <button class="section-tab" type="button" data-open-panel="session-panel">会话</button>
+              <button class="section-tab active" type="button">文件</button>
+            </div>
+            <form id="upload-form" class="stack">
+              <label>
+                上传到远端路径
+                <input id="upload-path" placeholder="/tmp/file.txt" />
+              </label>
+              <label>
+                本地文件
+                <input id="upload-file" type="file" />
+              </label>
+              <button type="submit">上传</button>
+            </form>
+            <form id="download-form" class="stack compact">
+              <label>
+                下载远端路径
+                <input id="download-path" placeholder="/tmp/file.txt" />
+              </label>
+              <button type="submit">下载</button>
+            </form>
+          </div>
         </section>
       </aside>
 
