@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>py-web-ssh logs</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body class="logs-page">
+    <main class="log-document">
+      <header>
+        <h1>会话日志</h1>
+        <p id="log-session-id">__SESSION_ID__</p>
+      </header>
+      <pre id="full-logs">加载中...</pre>
+    </main>
+    <script>
+      const sessionId = "__SESSION_ID__";
+      const fullLogs = document.querySelector("#full-logs");
+
+      function formatEntry(entry) {
+        const details = entry.details ? `\n${entry.details}` : "";
+        return `[${entry.timestamp}] ${entry.level.toUpperCase()} ${entry.message}${details}`;
+      }
+
+      async function refresh() {
+        const response = await fetch(`/api/sessions/${sessionId}/logs`);
+        if (!response.ok) {
+          fullLogs.textContent = await response.text();
+          return;
+        }
+        const payload = await response.json();
+        fullLogs.textContent = [
+          JSON.stringify(payload.session, null, 2),
+          "",
+          ...payload.logs.map(formatEntry),
+        ].join("\n");
+      }
+
+      refresh();
+      setInterval(refresh, 3000);
+    </script>
+  </body>
+</html>
