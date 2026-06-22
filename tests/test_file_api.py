@@ -1,0 +1,61 @@
+from io import BytesIO
+
+from fastapi.testclient import TestClient
+
+import webssh.app as app_module
+from webssh.app import app
+from webssh.models import ConnectRequest
+from webssh.session import SessionManager, TerminalSession
+
+
+def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> None:
+    client = TestClient(app)
+    manager = SessionManager(autostart_reaper=False)
+    session = TerminalSession(ConnectRequest(host="example.com", username="root"))
+    manager._sessions[session.id] = session
+    monkeypatch.setattr(app_module, "sessions", manager)
+    captured: dict[str, object] = {}
+
+    def fake_upload(config, source, remote_path, size, cancel_event=None, progress=None):
+        captured["config"] = config
+        captured["source"] = source.read()
+        captured["remote_path"] = remote_path
+        captured["size"] = size
+        if progress:
+            progress(len(captured["source"]))
+        return "shell", len(captured["source"])
+
+    monkeypatch.setattr(app_module, "upload_file_via_ssh", fake_upload)
+
+    task = client.post(
+        f"/api/sessions/{session.id}/files/uploads",
+        json={"remote_path": "/tmp/example.txt", "total_bytes": 5},
+    )
+    transfer_id = task.json()["transfer_id"]
+    response = client.post(
+        f"/api/sessions/{session.id}/files/upload",
+        data={"remote_path": "/tmp/example.txt", "transfer_id": transfer_id, "total_bytes": "5"},
+        files={"file": ("example.txt", BytesIO(b"hello"), "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert captured["config"] is session.config
+    assert captured["source"] == b"hello"
+    assert response.json()["method"] == "shell"
+
+
+def test_cancel_transfer_endpoint_marks_transfer_cancelled() -> None:
+    client = TestClient(app)
+    response = client.post(
+        "/api/sessions/not-used/files/uploads",
+        json={"remote_path": "/tmp/example.txt", "total_bytes": 5},
+    )
+
+    assert response.status_code == 404
+
+    tracker = app_module.transfers.create_upload(5, "/tmp/example.txt")
+    cancel = client.delete(f"/api/transfers/{tracker.id}")
+    status = client.get(f"/api/transfers/{tracker.id}")
+
+    assert cancel.status_code == 200
+    assert status.json()["state"] == "cancelled"

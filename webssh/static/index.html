@@ -117,6 +117,13 @@
               </label>
               <button type="submit">上传</button>
             </form>
+            <div id="upload-progress" class="transfer-progress hidden">
+              <div class="progress-row">
+                <span id="upload-progress-text">等待上传</span>
+                <button id="cancel-upload" type="button">取消上传</button>
+              </div>
+              <progress id="upload-progress-bar" max="100" value="0"></progress>
+            </div>
             <form id="download-form" class="stack compact">
               <label>
                 下载远端路径

@@ -5,116 +5,84 @@ import binascii
 import os
 import posixpath
 import shlex
+import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import BinaryIO
 
-import paramiko
+from .models import ConnectRequest
+from .ssh_client import connect_ssh
 
 
 class FileTransferError(RuntimeError):
     pass
 
 
-def upload_file(
-    client: paramiko.SSHClient,
+class FileTransferCancelled(FileTransferError):
+    pass
+
+
+ProgressCallback = Callable[[int], None]
+
+
+def upload_file_via_ssh(
+    config: ConnectRequest,
     source: BinaryIO,
     remote_path: str,
     size: int | None,
+    cancel_event: threading.Event | None = None,
+    progress: ProgressCallback | None = None,
 ) -> tuple[str, int]:
-    try:
-        return _upload_sftp(client, source, remote_path, size)
-    except Exception as sftp_exc:
-        source.seek(0)
-        try:
-            return _upload_shell(client, source, remote_path, size)
-        except Exception as shell_exc:
-            raise FileTransferError(
-                f"SFTP upload failed: {sftp_exc}\nShell fallback upload failed: {shell_exc}"
-            ) from shell_exc
+    """Upload using only an SSH exec channel and POSIX-ish shell commands.
 
+    This intentionally does not use SFTP or SCP. It follows the simple-ssh-copy
+    style: stream base64 into a remote shell, decode into a temporary file, and
+    atomically move the temp file into place after the complete upload succeeds.
+    """
 
-def download_file(client: paramiko.SSHClient, remote_path: str) -> tuple[str, Iterator[bytes]]:
-    try:
-        return "sftp", _download_sftp(client, remote_path)
-    except Exception as sftp_exc:
-        try:
-            return "shell", _download_shell(client, remote_path)
-        except Exception as shell_exc:
-            raise FileTransferError(
-                f"SFTP download failed: {sftp_exc}\nShell fallback download failed: {shell_exc}"
-            ) from shell_exc
-
-
-def _upload_sftp(
-    client: paramiko.SSHClient,
-    source: BinaryIO,
-    remote_path: str,
-    size: int | None,
-) -> tuple[str, int]:
-    transferred = 0
-
-    def callback(sent: int, _total: int) -> None:
-        nonlocal transferred
-        transferred = max(transferred, sent)
-
-    with client.open_sftp() as sftp:
-        parent = posixpath.dirname(remote_path)
-        if parent and parent != ".":
-            _sftp_mkdirs(sftp, parent)
-        sftp.putfo(source, remote_path, file_size=size or 0, callback=callback)
-
-    if transferred == 0 and size is not None:
-        transferred = size
-    elif transferred == 0:
-        transferred = _remote_size(client, remote_path)
-    return "sftp", transferred
-
-
-def _sftp_mkdirs(sftp: paramiko.SFTPClient, path: str) -> None:
-    if path in ("", "/"):
-        return
-    parts = [part for part in path.split("/") if part]
-    current = "/" if path.startswith("/") else ""
-    for part in parts:
-        current = posixpath.join(current, part) if current else part
-        try:
-            sftp.stat(current)
-        except IOError:
-            sftp.mkdir(current)
-
-
-def _upload_shell(
-    client: paramiko.SSHClient,
-    source: BinaryIO,
-    remote_path: str,
-    size: int | None,
-) -> tuple[str, int]:
+    connected = connect_ssh(config, lambda _level, _message, _details=None: None)
+    client = connected.client
     remote_dir = posixpath.dirname(remote_path) or "."
     temp_path = posixpath.join(remote_dir, f".py-web-ssh-upload-{uuid.uuid4().hex}.tmp")
-    command = (
-        "set -e; "
-        f"mkdir -p -- {shlex.quote(remote_dir)}; "
-        f"({_base64_decode_command()}) > {shlex.quote(temp_path)}; "
-        f"mv -- {shlex.quote(temp_path)} {shlex.quote(remote_path)}"
-    )
-    stdin, stdout, stderr = client.exec_command(f"sh -c {shlex.quote(command)}")
+    command = _upload_command(remote_dir, temp_path, remote_path)
+    stdin = stdout = stderr = None
     transferred = 0
     try:
+        stdin, stdout, stderr = client.exec_command(f"sh -c {shlex.quote(command)}")
         while True:
+            if cancel_event and cancel_event.is_set():
+                raise FileTransferCancelled("Upload cancelled by client.")
             chunk = source.read(48 * 1024)
             if not chunk:
                 break
             transferred += len(chunk)
             stdin.write(base64.b64encode(chunk).decode("ascii"))
             stdin.write("\n")
+            stdin.flush()
+            if progress:
+                progress(transferred)
+
+        if cancel_event and cancel_event.is_set():
+            raise FileTransferCancelled("Upload cancelled by client.")
+
         stdin.channel.shutdown_write()
         exit_code = stdout.channel.recv_exit_status()
         error_text = stderr.read().decode("utf-8", errors="replace")
+    except FileTransferCancelled:
+        _close_transport(client)
+        raise
+    except Exception as exc:
+        _close_transport(client)
+        raise FileTransferError(f"SSH shell upload failed: {exc}") from exc
     finally:
-        stdin.close()
-        stdout.close()
-        stderr.close()
+        for stream in (stdin, stdout, stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+        client.close()
+
     if exit_code != 0:
         raise FileTransferError(f"Remote upload command failed with exit code {exit_code}: {error_text}")
     if size is not None and transferred != size:
@@ -122,25 +90,9 @@ def _upload_shell(
     return "shell", transferred
 
 
-def _download_sftp(client: paramiko.SSHClient, remote_path: str) -> Iterator[bytes]:
-    sftp = client.open_sftp()
-    remote_file = sftp.open(remote_path, "rb")
-
-    def iterator() -> Iterator[bytes]:
-        try:
-            while True:
-                chunk = remote_file.read(64 * 1024)
-                if not chunk:
-                    break
-                yield chunk
-        finally:
-            remote_file.close()
-            sftp.close()
-
-    return iterator()
-
-
-def _download_shell(client: paramiko.SSHClient, remote_path: str) -> Iterator[bytes]:
+def download_file_via_ssh(config: ConnectRequest, remote_path: str) -> tuple[str, Iterator[bytes]]:
+    connected = connect_ssh(config, lambda _level, _message, _details=None: None)
+    client = connected.client
     command = f"base64 < {shlex.quote(remote_path)}"
     stdin, stdout, stderr = client.exec_command(f"sh -c {shlex.quote(command)}")
     stdin.close()
@@ -171,17 +123,39 @@ def _download_shell(client: paramiko.SSHClient, remote_path: str) -> Iterator[by
         finally:
             stdout.close()
             stderr.close()
+            client.close()
 
-    return iterator()
-
-
-def _base64_decode_command() -> str:
-    return "base64 -d 2>/dev/null || base64 -D"
+    return "shell", iterator()
 
 
-def _remote_size(client: paramiko.SSHClient, remote_path: str) -> int:
-    with client.open_sftp() as sftp:
-        return int(sftp.stat(remote_path).st_size or 0)
+def _upload_command(remote_dir: str, temp_path: str, remote_path: str) -> str:
+    quoted_temp = shlex.quote(temp_path)
+    return "\n".join(
+        [
+            "set -e",
+            f"mkdir -p -- {shlex.quote(remote_dir)}",
+            f"tmp={quoted_temp}",
+            "cleanup() { rm -f -- \"$tmp\"; }",
+            "trap cleanup EXIT HUP INT TERM",
+            f"if printf '' | base64 -d >/dev/null 2>&1; then base64 -d > {quoted_temp}; "
+            f"else base64 -D > {quoted_temp}; fi",
+            f"mv -- {quoted_temp} {shlex.quote(remote_path)}",
+            "trap - EXIT",
+        ]
+    )
+
+
+def _close_transport(client) -> None:
+    try:
+        transport = client.get_transport()
+        if transport is not None:
+            transport.close()
+    except Exception:
+        pass
+    try:
+        client.close()
+    except Exception:
+        pass
 
 
 def filename_for_download(remote_path: str) -> str:

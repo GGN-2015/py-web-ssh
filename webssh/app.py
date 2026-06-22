@@ -14,9 +14,15 @@ from . import __version__
 from . import auth
 from .auth import add_pin_argument, configure_pin
 from .client_session import ensure_client_session_cookie
-from .files import download_file, filename_for_download, upload_file
+from .files import (
+    FileTransferCancelled,
+    download_file_via_ssh,
+    filename_for_download,
+    upload_file_via_ssh,
+)
 from .models import ConnectRequest, CreateSessionResponse, FileTransferResponse
 from .session import SessionManager
+from .transfers import TransferManager
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,6 +34,7 @@ DEFAULT_PORT = 8022
 app = FastAPI(title="py-web-ssh", version=__version__)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 sessions = SessionManager()
+transfers = TransferManager()
 
 
 @app.middleware("http")
@@ -118,19 +125,35 @@ def upload(
     session_id: str,
     remote_path: Annotated[str, Form(min_length=1)],
     file: Annotated[UploadFile, File()],
+    transfer_id: Annotated[str | None, Form()] = None,
+    total_bytes: Annotated[int | None, Form()] = None,
 ) -> FileTransferResponse:
     session = _require_session(session_id)
+    tracker = transfers.get(transfer_id) if transfer_id else None
+    if transfer_id and tracker is None:
+        raise HTTPException(status_code=404, detail="Transfer not found.")
+    if tracker is None:
+        tracker = transfers.create_upload(total_bytes or _content_length(file), remote_path)
     try:
-        method, transferred = upload_file(
-            session.ssh_client,
+        method, transferred = upload_file_via_ssh(
+            session.config,
             file.file,
             remote_path,
-            _content_length(file),
+            total_bytes or _content_length(file),
+            cancel_event=tracker.cancel_event,
+            progress=tracker.update_progress,
         )
+    except FileTransferCancelled as exc:
+        message = f"File upload cancelled: {exc}"
+        tracker.cancelled(message)
+        session.log("warning", message, None)
+        raise HTTPException(status_code=499, detail=message) from exc
     except Exception as exc:
+        tracker.fail(str(exc))
         session.log("error", f"File upload failed: {exc}", None)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     message = f"Uploaded {transferred} bytes to {remote_path} using {method}."
+    tracker.complete(transferred, message)
     session.log("info", message, None)
     return FileTransferResponse(
         ok=True,
@@ -138,14 +161,63 @@ def upload(
         bytes_transferred=transferred,
         remote_path=remote_path,
         message=message,
+        transfer_id=tracker.id,
     )
+
+
+@app.post("/api/sessions/{session_id}/files/uploads")
+async def create_upload_task(session_id: str, request: Request) -> JSONResponse:
+    _require_session(session_id)
+    payload = await request.json()
+    remote_path = str(payload.get("remote_path", "")).strip()
+    if not remote_path:
+        raise HTTPException(status_code=422, detail="remote_path is required.")
+    total_bytes = payload.get("total_bytes")
+    if total_bytes is not None:
+        total_bytes = int(total_bytes)
+    tracker = transfers.create_upload(total_bytes, remote_path)
+    return JSONResponse(
+        {
+            "transfer_id": tracker.id,
+            "state": tracker.status().state,
+            "remote_path": remote_path,
+            "total_bytes": total_bytes,
+        }
+    )
+
+
+@app.get("/api/transfers/{transfer_id}")
+def get_transfer(transfer_id: str) -> JSONResponse:
+    tracker = transfers.get(transfer_id)
+    if tracker is None:
+        raise HTTPException(status_code=404, detail="Transfer not found.")
+    status = tracker.status()
+    return JSONResponse(
+        {
+            "transfer_id": status.transfer_id,
+            "state": status.state,
+            "bytes_transferred": status.bytes_transferred,
+            "total_bytes": status.total_bytes,
+            "remote_path": status.remote_path,
+            "message": status.message,
+            "created_at": status.created_at.isoformat(),
+            "updated_at": status.updated_at.isoformat(),
+        }
+    )
+
+
+@app.delete("/api/transfers/{transfer_id}")
+def cancel_transfer(transfer_id: str) -> JSONResponse:
+    if not transfers.cancel(transfer_id):
+        raise HTTPException(status_code=404, detail="Transfer not found.")
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/sessions/{session_id}/files/download")
 def download(session_id: str, remote_path: str) -> StreamingResponse:
     session = _require_session(session_id)
     try:
-        method, stream = download_file(session.ssh_client, remote_path)
+        method, stream = download_file_via_ssh(session.config, remote_path)
     except Exception as exc:
         session.log("error", f"File download failed: {exc}", None)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

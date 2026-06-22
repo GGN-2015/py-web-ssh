@@ -1,6 +1,6 @@
 [project]
 name = "py-web-ssh"
-version = "0.1.4"
+version = "0.1.5"
 description = "A Python web SSH client with xterm.js, reconnectable sessions, logs, and file transfer."
 readme = "README.md"
 requires-python = ">=3.10"

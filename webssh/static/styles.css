@@ -233,6 +233,33 @@ label {
   text-decoration: none;
 }
 
+.transfer-progress {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  background: #0c1116;
+}
+
+.transfer-progress.hidden {
+  display: none;
+}
+
+.progress-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+progress {
+  width: 100%;
+  height: 10px;
+}
+
 .workspace {
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);

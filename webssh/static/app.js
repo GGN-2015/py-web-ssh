@@ -9,6 +9,10 @@ const pinForm = document.querySelector("#pin-form");
 const pinInput = document.querySelector("#pin-input");
 const pinError = document.querySelector("#pin-error");
 const panelToggles = document.querySelectorAll(".panel-toggle");
+const uploadProgress = document.querySelector("#upload-progress");
+const uploadProgressText = document.querySelector("#upload-progress-text");
+const uploadProgressBar = document.querySelector("#upload-progress-bar");
+const cancelUploadButton = document.querySelector("#cancel-upload");
 
 const term = new Terminal({
   cursorBlink: true,
@@ -50,6 +54,7 @@ let ws = null;
 let activeSessionId = localStorage.getItem("py-web-ssh-session") || "";
 let lastAppliedSeq = 0;
 let snapshotTimer = null;
+let activeUpload = null;
 
 if (activeSessionId) {
   sessionInput.value = activeSessionId;
@@ -153,15 +158,81 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
   }
   const form = new FormData();
   form.append("remote_path", remotePath);
+  form.append("total_bytes", String(file.size));
   form.append("file", file);
+  let xhr = null;
+  const uploadState = {
+    xhr: null,
+    transferId: null,
+    pollTimer: null,
+    cancelled: false,
+    fileSize: file.size,
+  };
+  activeUpload = uploadState;
+  showUploadProgress(0, file.size, "准备上传...");
   setStatus("上传中...");
-  const response = await fetch(`/api/sessions/${activeSessionId}/files/upload`, {
+  try {
+    const task = await createUploadTask(activeSessionId, remotePath, file.size);
+    uploadState.transferId = task.transfer_id;
+    form.append("transfer_id", uploadState.transferId);
+    startUploadPolling(uploadState);
+    xhr = uploadWithXhr(`/api/sessions/${activeSessionId}/files/upload`, form, uploadState);
+    uploadState.xhr = xhr;
+    const result = await xhr;
+    showUploadProgress(result.bytes_transferred, file.size, "上传完成");
+    appendLogLine(`上传完成: ${JSON.stringify(result)}`);
+    setStatus("上传完成");
+  } catch (error) {
+    appendLogLine(uploadState.cancelled ? "上传已取消。" : `上传失败: ${error}`);
+    setStatus(uploadState.cancelled ? "上传已取消" : "上传失败");
+  } finally {
+    stopUploadPolling(uploadState);
+    if (activeUpload === uploadState) activeUpload = null;
+  }
+});
+
+async function createUploadTask(sessionId, remotePath, totalBytes) {
+  const response = await fetch(`/api/sessions/${sessionId}/files/uploads`, {
     method: "POST",
-    body: form,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remote_path: remotePath, total_bytes: totalBytes }),
   });
-  const body = await response.text();
-  appendLogLine(response.ok ? `上传完成: ${body}` : `上传失败: ${body}`);
-  setStatus(response.ok ? "上传完成" : "上传失败");
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return await response.json();
+}
+
+function uploadWithXhr(url, form, uploadState) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) {
+        showUploadProgress(event.loaded, event.total, "正在发送到服务端...");
+      }
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
+      }
+    });
+    xhr.addEventListener("error", () => reject(new Error("Network error during upload.")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload request aborted.")));
+    xhr.send(form);
+  });
+}
+
+cancelUploadButton.addEventListener("click", async () => {
+  if (!activeUpload) return;
+  activeUpload.cancelled = true;
+  showUploadProgress(0, activeUpload.fileSize, "正在取消上传...");
+  if (activeUpload.transferId) {
+    await fetch(`/api/transfers/${activeUpload.transferId}`, { method: "DELETE" });
+  }
+  if (activeUpload.xhr) activeUpload.xhr.abort();
 });
 
 document.querySelector("#download-form").addEventListener("submit", async (event) => {
@@ -388,6 +459,49 @@ function filenameFromResponse(response, fallbackPath) {
   const match = disposition.match(/filename="([^"]+)"/);
   if (match) return match[1];
   return fallbackPath.split("/").filter(Boolean).pop() || "download.bin";
+}
+
+function showUploadProgress(done, total, message) {
+  uploadProgress.classList.remove("hidden");
+  const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  uploadProgressBar.value = percent;
+  uploadProgressText.textContent = `${message} ${formatBytes(done)}${total ? ` / ${formatBytes(total)}` : ""}`;
+}
+
+function startUploadPolling(uploadState) {
+  stopUploadPolling(uploadState);
+  uploadState.pollTimer = window.setInterval(async () => {
+    if (!uploadState.transferId) return;
+    try {
+      const response = await fetch(`/api/transfers/${uploadState.transferId}`);
+      if (!response.ok) return;
+      const status = await response.json();
+      showUploadProgress(
+        status.bytes_transferred || 0,
+        status.total_bytes || uploadState.fileSize,
+        status.message || status.state,
+      );
+      if (["completed", "cancelled", "failed"].includes(status.state)) {
+        stopUploadPolling(uploadState);
+      }
+    } catch (_error) {
+      return;
+    }
+  }, 500);
+}
+
+function stopUploadPolling(uploadState) {
+  if (uploadState.pollTimer) {
+    window.clearInterval(uploadState.pollTimer);
+    uploadState.pollTimer = null;
+  }
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value)) return "0 B";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MiB`;
 }
 
 function bytesToBase64(bytes) {

@@ -70,7 +70,8 @@ class SessionSummary(BaseModel):
 
 class FileTransferResponse(BaseModel):
     ok: bool
-    method: Literal["sftp", "shell"]
+    method: Literal["shell"]
     bytes_transferred: int
     remote_path: str
     message: str
+    transfer_id: str | None = None
