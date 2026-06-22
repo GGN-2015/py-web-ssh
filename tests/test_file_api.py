@@ -6,6 +6,16 @@ import webssh.app as app_module
 from webssh.app import app
 from webssh.models import ConnectRequest
 from webssh.session import SessionManager, TerminalSession
+from webssh.ssh_client import HostKeyInfo
+
+
+def fake_host_key() -> HostKeyInfo:
+    return HostKeyInfo(
+        key_type="ssh-ed25519",
+        sha256_fingerprint="SHA256:test",
+        md5_fingerprint="MD5:00",
+        key_base64="key",
+    )
 
 
 def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> None:
@@ -16,11 +26,15 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
     monkeypatch.setattr(app_module, "sessions", manager)
     captured: dict[str, object] = {}
 
-    def fake_upload(config, source, remote_path, size, cancel_event=None, progress=None):
+    host_key = fake_host_key()
+    session._confirmed_host_key = host_key
+
+    def fake_upload(config, source, remote_path, size, expected_host_key, cancel_event=None, progress=None):
         captured["config"] = config
         captured["source"] = source.read()
         captured["remote_path"] = remote_path
         captured["size"] = size
+        captured["expected_host_key"] = expected_host_key
         if progress:
             progress(len(captured["source"]))
         return "shell", len(captured["source"])
@@ -40,8 +54,42 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
 
     assert response.status_code == 200
     assert captured["config"] is session.config
+    assert captured["expected_host_key"] is host_key
     assert captured["source"] == b"hello"
     assert response.json()["method"] == "shell"
+
+
+def test_upload_requires_confirmed_host_key(monkeypatch) -> None:
+    client = TestClient(app)
+    manager = SessionManager(autostart_reaper=False)
+    session = TerminalSession(ConnectRequest(host="example.com", username="root"))
+    manager._sessions[session.id] = session
+    monkeypatch.setattr(app_module, "sessions", manager)
+
+    response = client.post(
+        f"/api/sessions/{session.id}/files/upload",
+        data={"remote_path": "/tmp/example.txt", "total_bytes": "5"},
+        files={"file": ("example.txt", BytesIO(b"hello"), "text/plain")},
+    )
+
+    assert response.status_code == 409
+    assert "host key has not been confirmed" in response.json()["detail"]
+
+
+def test_create_upload_task_requires_confirmed_host_key(monkeypatch) -> None:
+    client = TestClient(app)
+    manager = SessionManager(autostart_reaper=False)
+    session = TerminalSession(ConnectRequest(host="example.com", username="root"))
+    manager._sessions[session.id] = session
+    monkeypatch.setattr(app_module, "sessions", manager)
+
+    response = client.post(
+        f"/api/sessions/{session.id}/files/uploads",
+        json={"remote_path": "/tmp/example.txt", "total_bytes": 5},
+    )
+
+    assert response.status_code == 409
+    assert "host key has not been confirmed" in response.json()["detail"]
 
 
 def test_cancel_transfer_endpoint_marks_transfer_cancelled() -> None:

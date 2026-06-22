@@ -18,10 +18,8 @@ class ConnectRequest(BaseModel):
     password: str | None = None
     private_key: str | None = None
     private_key_passphrase: str | None = None
-    allow_agent: bool = False
     look_for_keys: bool = False
     legacy_algorithms: bool = True
-    strict_host_key: bool = False
     term: str = Field(default="xterm-256color", min_length=1, max_length=64)
     size: TerminalSize = Field(default_factory=TerminalSize)
     timeout_seconds: float = Field(default=20.0, ge=3.0, le=120.0)

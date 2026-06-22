@@ -5,13 +5,14 @@
 ## 功能
 
 - SSH 交互终端：Paramiko 后端 `invoke_shell`，xterm.js 前端实时交互。
-- 登录方式：密码、浏览器上传私钥、私钥口令、SSH agent、服务端本机 `~/.ssh` 密钥、免口令/none auth。
+- 登录方式：密码、浏览器上传私钥、私钥口令、服务端本机默认 `~/.ssh` 密钥、免口令/none auth。
+- Host key 确认：不使用 `known_hosts` 校验；每次交互 SSH 连接都会在 xterm.js 终端里显示服务器 host key 指纹，并要求用户输入 `Y` 或 `N` 后才继续认证。
 - Legacy 兼容：启动时按当前 Paramiko 运行时能力尽量启用旧 KEX/Cipher/MAC/HostKey/Pubkey 算法，并在日志中列出不可用算法。
 - UUID 会话：创建会话后返回 UUID，WebSocket 断开后可用同 UUID 重连。
 - 会话回收：同一个 UUID 如果所有浏览器连接都断开并且 5 分钟内无人重连，服务端会主动断开 SSH 并清理内存缓存。
 - 终端恢复：服务端保存 SSH 输出流，浏览器定期回传 xterm serialize 快照；重连时先恢复快照，再补放快照之后的输出。
 - 日志页面：`/sessions/{uuid}/logs` 展示完整连接、认证、错误和文件传输日志。
-- 文件传输：参考 `simple-ssh-copy` 思路，不使用 SFTP/SCP；每次传输都按连接配置新建独立 SSH 连接，使用远端 `base64` shell 命令上传/下载。上传先写远端临时文件，完成后再 `mv` 到最终路径，并支持进度显示和取消。
+- 文件传输：参考 `simple-ssh-copy` 思路，不使用 SFTP/SCP；每次传输都按连接配置新建独立 SSH 连接，使用远端 `base64` shell 命令上传/下载。上传先写远端临时文件，完成后再 `mv` 到最终路径，并支持进度显示和取消。文件传输连接会校验服务器 host key 必须等于用户在交互终端里确认过的 host key。
 - 可选 PIN 门禁：服务端传入 `--pin` 后，网页启动时必须先输入正确 PIN；验证成功后浏览器会保存加盐哈希 cookie，后端会保护 HTTP API、日志页面、文件接口和 WebSocket。
 - 启动锁定策略：支持 `--lock-host`、`--lock-username`、`--lock-pwd`、`--lock-private-key`，可从服务端强制绑定目标主机、用户名、密码和服务端侧私钥文件。前端会锁定或隐藏对应控件，后端仍会校验并覆盖敏感字段。
 - 中英双语：默认英文，网页和日志页都支持中英切换；语言选择会长期保存到 `py_web_ssh_lang` cookie。
@@ -71,4 +72,4 @@ py-web-ssh --lock-private-key C:\secrets\id_ed25519
 
 ## 安全提示
 
-这个项目默认面向可信内网或本机使用。私钥和口令只保存在进程内存中，不写入日志；如果要暴露到公网，请务必加 HTTPS、登录认证、CSRF/来源限制、审计和会话回收策略。
+这个项目默认面向可信内网或本机使用。私钥和口令只保存在进程内存中，不写入日志；SSH agent 已禁用，`known_hosts` 校验已移除，用户必须在 xterm.js 终端里确认服务器 host key 指纹后才会继续认证。如果要暴露到公网，请务必加 HTTPS、登录认证、CSRF/来源限制、审计和会话回收策略。

@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator
 from typing import BinaryIO
 
 from .models import ConnectRequest
-from .ssh_client import connect_ssh
+from .ssh_client import HostKeyInfo, connect_ssh
 
 
 class FileTransferError(RuntimeError):
@@ -30,6 +30,7 @@ def upload_file_via_ssh(
     source: BinaryIO,
     remote_path: str,
     size: int | None,
+    expected_host_key: HostKeyInfo,
     cancel_event: threading.Event | None = None,
     progress: ProgressCallback | None = None,
 ) -> tuple[str, int]:
@@ -40,7 +41,11 @@ def upload_file_via_ssh(
     atomically move the temp file into place after the complete upload succeeds.
     """
 
-    connected = connect_ssh(config, lambda _level, _message, _details=None: None)
+    connected = connect_ssh(
+        config,
+        lambda _level, _message, _details=None: None,
+        expected_host_key=expected_host_key,
+    )
     client = connected.client
     remote_dir = posixpath.dirname(remote_path) or "."
     temp_path = posixpath.join(remote_dir, f".py-web-ssh-upload-{uuid.uuid4().hex}.tmp")
@@ -90,8 +95,16 @@ def upload_file_via_ssh(
     return "shell", transferred
 
 
-def download_file_via_ssh(config: ConnectRequest, remote_path: str) -> tuple[str, Iterator[bytes]]:
-    connected = connect_ssh(config, lambda _level, _message, _details=None: None)
+def download_file_via_ssh(
+    config: ConnectRequest,
+    remote_path: str,
+    expected_host_key: HostKeyInfo,
+) -> tuple[str, Iterator[bytes]]:
+    connected = connect_ssh(
+        config,
+        lambda _level, _message, _details=None: None,
+        expected_host_key=expected_host_key,
+    )
     client = connected.client
     command = f"base64 < {shlex.quote(remote_path)}"
     stdin, stdout, stderr = client.exec_command(f"sh -c {shlex.quote(command)}")

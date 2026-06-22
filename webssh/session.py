@@ -16,10 +16,10 @@ from starlette.websockets import WebSocket
 
 from .history import OutputChunk, OutputHistory
 from .models import ConnectRequest, LogEntry, SessionSummary
-from .ssh_client import ConnectedClient, connect_ssh
+from .ssh_client import ConnectedClient, HostKeyInfo, connect_ssh
 
 
-SessionState = Literal["connecting", "connected", "closing", "closed", "error"]
+SessionState = Literal["connecting", "waiting_host_key", "connected", "closing", "closed", "error"]
 
 
 @dataclass(eq=False)
@@ -41,6 +41,10 @@ class TerminalSession:
         self._clients: set[BrowserConnection] = set()
         self._lock = threading.RLock()
         self._channel_lock = threading.RLock()
+        self._host_key_lock = threading.Condition(threading.RLock())
+        self._awaiting_host_key_confirmation = False
+        self._host_key_decision: bool | None = None
+        self._confirmed_host_key: HostKeyInfo | None = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f"ssh-session-{self.id}", daemon=True)
         self._connected: ConnectedClient | None = None
@@ -134,6 +138,8 @@ class TerminalSession:
             }
 
     def send_input(self, data: bytes) -> None:
+        if self._handle_host_key_confirmation_input(data):
+            return
         with self._channel_lock:
             if self._channel is None or self.state != "connected":
                 raise RuntimeError("SSH channel is not connected.")
@@ -174,10 +180,19 @@ class TerminalSession:
             raise RuntimeError("SSH connection is not ready.")
         return self._connected.client
 
+    @property
+    def confirmed_host_key(self) -> HostKeyInfo | None:
+        with self._host_key_lock:
+            return self._confirmed_host_key
+
     def _run(self) -> None:
         try:
             self.log("info", "Creating SSH connection.", None)
-            self._connected = connect_ssh(self.config, self.log)
+            self._connected = connect_ssh(
+                self.config,
+                self.log,
+                confirm_host_key=self._confirm_host_key,
+            )
             channel = self._connected.transport.open_session()
             channel.get_pty(
                 term=self.config.term,
@@ -237,6 +252,76 @@ class TerminalSession:
             chunk = self.history.append(data)
             self.updated_at = datetime.now(timezone.utc)
         self._broadcast(self._chunk_payload(chunk) | {"type": "output"})
+
+    def _confirm_host_key(self, host_key: HostKeyInfo) -> bool:
+        with self._host_key_lock:
+            self._awaiting_host_key_confirmation = True
+            self._host_key_decision = None
+        self._set_state("waiting_host_key")
+        self.log("warning", "Waiting for browser user to confirm SSH server host key.", host_key.details())
+        self._append_output(self._host_key_prompt(host_key).encode("utf-8"))
+
+        while not self._stop.is_set():
+            with self._host_key_lock:
+                if self._host_key_decision is not None:
+                    accepted = self._host_key_decision
+                    self._awaiting_host_key_confirmation = False
+                    if accepted:
+                        self._confirmed_host_key = host_key
+                    break
+                self._host_key_lock.wait(timeout=0.2)
+        else:
+            accepted = False
+            with self._host_key_lock:
+                self._awaiting_host_key_confirmation = False
+
+        if accepted:
+            self._append_output(b"Y\r\nContinuing SSH authentication...\r\n")
+            self._set_state("connecting")
+            return True
+
+        self._append_output(b"N\r\nSSH connection cancelled before authentication.\r\n")
+        return False
+
+    def _handle_host_key_confirmation_input(self, data: bytes) -> bool:
+        with self._host_key_lock:
+            if not self._awaiting_host_key_confirmation:
+                return False
+
+        text = data.decode("utf-8", errors="ignore")
+        decision: bool | None = None
+        invalid = False
+        for char in text:
+            if char in "\r\n\t ":
+                continue
+            if char in ("y", "Y"):
+                decision = True
+                break
+            if char in ("n", "N"):
+                decision = False
+                break
+            invalid = True
+            break
+
+        if decision is None:
+            if invalid:
+                self._append_output(b"\r\nPlease type Y or N: ")
+            return True
+
+        with self._host_key_lock:
+            self._host_key_decision = decision
+            self._host_key_lock.notify_all()
+        return True
+
+    def _host_key_prompt(self, host_key: HostKeyInfo) -> str:
+        return (
+            "\r\n[py-web-ssh] SSH server host key fingerprint\r\n"
+            f"Host: {self.config.host}:{self.config.port}\r\n"
+            f"Key type: {host_key.key_type}\r\n"
+            f"SHA256 fingerprint: {host_key.sha256_fingerprint}\r\n"
+            f"MD5 fingerprint: {host_key.md5_fingerprint}\r\n"
+            "Continue connecting? Type Y or N: "
+        )
 
     def _chunk_payload(self, chunk: OutputChunk) -> dict[str, Any]:
         return {

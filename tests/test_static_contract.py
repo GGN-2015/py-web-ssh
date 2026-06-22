@@ -67,3 +67,13 @@ def test_upload_cancel_can_abort_the_xhr_request() -> None:
     assert "return { xhr, promise };" in script
     assert "uploadState.xhr = xhrUpload.xhr;" in script
     assert "activeUpload.xhr.abort();" in script
+
+
+def test_frontend_no_longer_exposes_agent_or_known_hosts_controls() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    forbidden = ["allow-agent", "strict-host-key", "SSH agent", "known_hosts", "allow_agent", "strict_host_key"]
+    for text in forbidden:
+        assert text not in markup
+        assert text not in script

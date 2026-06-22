@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import io
 import socket
 import traceback
@@ -21,7 +23,48 @@ class ConnectedClient:
     transport: paramiko.Transport
 
 
-def connect_ssh(config: ConnectRequest, log: LogCallback) -> ConnectedClient:
+@dataclass(frozen=True)
+class HostKeyInfo:
+    key_type: str
+    sha256_fingerprint: str
+    md5_fingerprint: str
+    key_base64: str
+
+    @classmethod
+    def from_key(cls, key: paramiko.PKey) -> "HostKeyInfo":
+        key_bytes = key.asbytes()
+        sha256_digest = hashlib.sha256(key_bytes).digest()
+        sha256_value = base64.b64encode(sha256_digest).decode("ascii").rstrip("=")
+        md5_value = ":".join(f"{byte:02x}" for byte in key.get_fingerprint())
+        return cls(
+            key_type=key.get_name(),
+            sha256_fingerprint=f"SHA256:{sha256_value}",
+            md5_fingerprint=f"MD5:{md5_value}",
+            key_base64=base64.b64encode(key_bytes).decode("ascii"),
+        )
+
+    def matches(self, key: paramiko.PKey) -> bool:
+        return self.key_base64 == base64.b64encode(key.asbytes()).decode("ascii")
+
+    def details(self) -> str:
+        return "\n".join(
+            [
+                f"type={self.key_type}",
+                f"sha256={self.sha256_fingerprint}",
+                f"md5={self.md5_fingerprint}",
+            ]
+        )
+
+
+HostKeyConfirmation = Callable[[HostKeyInfo], bool]
+
+
+def connect_ssh(
+    config: ConnectRequest,
+    log: LogCallback,
+    confirm_host_key: HostKeyConfirmation | None = None,
+    expected_host_key: HostKeyInfo | None = None,
+) -> ConnectedClient:
     """Open an SSH connection, including legacy algorithms Paramiko still supports."""
 
     sock = socket.create_connection((config.host, config.port), timeout=config.timeout_seconds)
@@ -35,10 +78,21 @@ def connect_ssh(config: ConnectRequest, log: LogCallback) -> ConnectedClient:
         if config.keepalive_seconds:
             transport.set_keepalive(config.keepalive_seconds)
 
-        if config.strict_host_key:
-            _check_known_host(config, transport, log)
+        host_key = transport.get_remote_server_key()
+        host_key_info = HostKeyInfo.from_key(host_key)
+        log("info", "SSH server host key received.", host_key_info.details())
+        if expected_host_key is not None:
+            if not expected_host_key.matches(host_key):
+                raise paramiko.SSHException(
+                    "SSH server host key changed since the browser user confirmed it."
+                )
+            log("info", "SSH server host key matches the browser-confirmed key.", None)
+        elif confirm_host_key is not None:
+            if not confirm_host_key(host_key_info):
+                raise paramiko.SSHException("SSH server host key was rejected by the browser user.")
+            log("info", "SSH server host key accepted by the browser user.", None)
         else:
-            log("warning", "Strict host key checking is disabled for this browser session.", None)
+            raise paramiko.SSHException("SSH server host key confirmation is required.")
 
         _authenticate(transport, config, log)
 
@@ -158,29 +212,6 @@ def _supported_algorithms(options: paramiko.transport.SecurityOptions, attr: str
     return set(getattr(transport, info_attr).keys())
 
 
-def _check_known_host(config: ConnectRequest, transport: paramiko.Transport, log: LogCallback) -> None:
-    host_key = transport.get_remote_server_key()
-    known_hosts = paramiko.HostKeys()
-    paths = [
-        Path.home() / ".ssh" / "known_hosts",
-        Path.home() / ".ssh" / "known_hosts2",
-    ]
-    for path in paths:
-        if path.exists():
-            known_hosts.load(str(path))
-
-    candidates = [config.host, f"[{config.host}]:{config.port}"]
-    for candidate in candidates:
-        if known_hosts.check(candidate, host_key):
-            log("info", f"Host key verified for {candidate}.", None)
-            return
-
-    raise paramiko.SSHException(
-        "Strict host key checking failed. The remote host key is not present in "
-        "~/.ssh/known_hosts for this server and port."
-    )
-
-
 def _authenticate(transport: paramiko.Transport, config: ConnectRequest, log: LogCallback) -> None:
     username = config.username
     errors: list[str] = []
@@ -195,21 +226,6 @@ def _authenticate(transport: paramiko.Transport, config: ConnectRequest, log: Lo
             log("warning", f"Private key authentication failed: {exc}", traceback.format_exc())
         if transport.is_authenticated():
             return
-
-    if config.allow_agent:
-        try:
-            for key in paramiko.Agent().get_keys():
-                try:
-                    log("info", f"Trying SSH agent key {key.get_name()}.", None)
-                    transport.auth_publickey(username, key)
-                except Exception as exc:
-                    errors.append(f"agent key {key.get_name()}: {exc}")
-                    log("debug", f"SSH agent key failed: {exc}", None)
-                if transport.is_authenticated():
-                    return
-        except Exception as exc:
-            errors.append(f"agent: {exc}")
-            log("warning", f"SSH agent authentication failed: {exc}", traceback.format_exc())
 
     if config.look_for_keys:
         for key in _load_default_private_keys(config.private_key_passphrase, log):

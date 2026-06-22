@@ -142,6 +142,12 @@ def upload(
     total_bytes: Annotated[int | None, Form()] = None,
 ) -> FileTransferResponse:
     session = _require_session(session_id)
+    expected_host_key = session.confirmed_host_key
+    if expected_host_key is None:
+        raise HTTPException(
+            status_code=409,
+            detail="SSH server host key has not been confirmed in the terminal yet.",
+        )
     tracker = transfers.get(transfer_id) if transfer_id else None
     if transfer_id and tracker is None:
         raise HTTPException(status_code=404, detail="Transfer not found.")
@@ -153,6 +159,7 @@ def upload(
             file.file,
             remote_path,
             total_bytes or _content_length(file),
+            expected_host_key,
             cancel_event=tracker.cancel_event,
             progress=tracker.update_progress,
         )
@@ -180,7 +187,12 @@ def upload(
 
 @app.post("/api/sessions/{session_id}/files/uploads")
 async def create_upload_task(session_id: str, request: Request) -> JSONResponse:
-    _require_session(session_id)
+    session = _require_session(session_id)
+    if session.confirmed_host_key is None:
+        raise HTTPException(
+            status_code=409,
+            detail="SSH server host key has not been confirmed in the terminal yet.",
+        )
     payload = await request.json()
     remote_path = str(payload.get("remote_path", "")).strip()
     if not remote_path:
@@ -229,8 +241,14 @@ def cancel_transfer(transfer_id: str) -> JSONResponse:
 @app.get("/api/sessions/{session_id}/files/download")
 def download(session_id: str, remote_path: str) -> StreamingResponse:
     session = _require_session(session_id)
+    expected_host_key = session.confirmed_host_key
+    if expected_host_key is None:
+        raise HTTPException(
+            status_code=409,
+            detail="SSH server host key has not been confirmed in the terminal yet.",
+        )
     try:
-        method, stream = download_file_via_ssh(session.config, remote_path)
+        method, stream = download_file_via_ssh(session.config, remote_path, expected_host_key)
     except Exception as exc:
         session.log("error", f"File download failed: {exc}", None)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
