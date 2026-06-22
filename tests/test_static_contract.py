@@ -84,6 +84,17 @@ def test_upload_cancel_can_abort_the_xhr_request() -> None:
     assert "activeUpload.xhr.abort();" in script
 
 
+def test_completed_upload_replaces_cancel_action_with_translated_disabled_button() -> None:
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'setUploadActionState("cancel");' in script
+    assert 'setUploadActionState("complete");' in script
+    assert "function setUploadActionState(state)" in script
+    assert "cancelUploadButton.disabled = completed;" in script
+    assert 'completed ? t("uploadComplete") : t("cancelUpload")' in script
+    assert 'cancelUploadButton.dataset.uploadActionState || "cancel"' in script
+
+
 def test_upload_progress_displays_eta() -> None:
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")
 

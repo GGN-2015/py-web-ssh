@@ -320,6 +320,7 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     startedAt: Date.now(),
   };
   activeUpload = uploadState;
+  setUploadActionState("cancel");
   showUploadProgress(0, file.size, t("preparingUpload"), uploadState);
   setStatus(t("uploading"));
   try {
@@ -331,6 +332,7 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     uploadState.xhr = xhrUpload.xhr;
     const result = await xhrUpload.promise;
     showUploadProgress(result.bytes_transferred, file.size, t("uploadComplete"), uploadState);
+    setUploadActionState("complete");
     appendLogLine(`${t("uploadComplete")}: ${JSON.stringify(result)}`);
     setStatus(t("uploadComplete"));
   } catch (error) {
@@ -387,6 +389,13 @@ cancelUploadButton.addEventListener("click", async () => {
   }
   if (activeUpload.xhr) activeUpload.xhr.abort();
 });
+
+function setUploadActionState(state) {
+  cancelUploadButton.dataset.uploadActionState = state;
+  const completed = state === "complete";
+  cancelUploadButton.disabled = completed;
+  cancelUploadButton.textContent = completed ? t("uploadComplete") : t("cancelUpload");
+}
 
 document.querySelector("#download-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -827,6 +836,7 @@ function applyLanguage(language) {
   });
   languageToggle.textContent = t("languageButton");
   setLanguageCookie(currentLanguage);
+  setUploadActionState(cancelUploadButton.dataset.uploadActionState || "cancel");
   if (statusElement.getAttribute("data-i18n") === "notConnected") {
     statusElement.textContent = t("notConnected");
   }
