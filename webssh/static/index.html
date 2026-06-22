@@ -30,46 +30,48 @@
           <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="connect-panel">
             连接
           </button>
-          <form id="connect-panel" class="stack panel-body" hidden>
+          <div id="connect-panel" class="stack panel-body" hidden>
             <div class="section-tabs" aria-label="连接栏目">
               <button class="section-tab active" type="button">连接</button>
               <button class="section-tab" type="button" data-open-panel="session-panel">会话</button>
               <button class="section-tab" type="button" data-open-panel="files-panel">文件</button>
             </div>
-            <label>
-              目标服务器
-              <input id="host" name="host" required autocomplete="off" placeholder="192.168.1.10" />
-            </label>
-            <div class="grid-2">
+            <form id="connect-form" class="stack">
               <label>
-                端口
-                <input id="port" name="port" type="number" min="1" max="65535" value="22" required />
+                目标服务器
+                <input id="host" name="host" required autocomplete="off" placeholder="192.168.1.10" />
+              </label>
+              <div class="grid-2">
+                <label>
+                  端口
+                  <input id="port" name="port" type="number" min="1" max="65535" value="22" required />
+                </label>
+                <label>
+                  用户名
+                  <input id="username" name="username" required autocomplete="username" />
+                </label>
+              </div>
+              <label>
+                口令
+                <input id="password" name="password" type="password" autocomplete="current-password" />
               </label>
               <label>
-                用户名
-                <input id="username" name="username" required autocomplete="username" />
+                私钥文件
+                <input id="private-key-file" name="private-key-file" type="file" />
               </label>
-            </div>
-            <label>
-              口令
-              <input id="password" name="password" type="password" autocomplete="current-password" />
-            </label>
-            <label>
-              私钥文件
-              <input id="private-key-file" name="private-key-file" type="file" />
-            </label>
-            <label>
-              私钥口令
-              <input id="private-key-passphrase" name="private-key-passphrase" type="password" />
-            </label>
-            <div class="checks">
-              <label><input id="legacy-algorithms" type="checkbox" checked /> legacy 算法</label>
-              <label><input id="allow-agent" type="checkbox" /> SSH agent</label>
-              <label><input id="look-for-keys" type="checkbox" /> 服务端本机密钥</label>
-              <label><input id="strict-host-key" type="checkbox" /> known_hosts 校验</label>
-            </div>
-            <button class="primary" type="submit">连接</button>
-          </form>
+              <label>
+                私钥口令
+                <input id="private-key-passphrase" name="private-key-passphrase" type="password" />
+              </label>
+              <div class="checks">
+                <label><input id="legacy-algorithms" type="checkbox" checked /> legacy 算法</label>
+                <label><input id="allow-agent" type="checkbox" /> SSH agent</label>
+                <label><input id="look-for-keys" type="checkbox" /> 服务端本机密钥</label>
+                <label><input id="strict-host-key" type="checkbox" /> known_hosts 校验</label>
+              </div>
+              <button class="primary" type="submit">连接</button>
+            </form>
+          </div>
         </section>
 
         <section class="panel collapsible-panel">

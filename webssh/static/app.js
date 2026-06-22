@@ -164,15 +164,31 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
   setStatus(response.ok ? "上传完成" : "上传失败");
 });
 
-document.querySelector("#download-form").addEventListener("submit", (event) => {
+document.querySelector("#download-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const remotePath = valueOf("#download-path");
   if (!activeSessionId || !remotePath) {
     appendLogLine("下载需要会话 UUID 和远端路径。");
     return;
   }
-  window.location.href =
-    `/api/sessions/${activeSessionId}/files/download?remote_path=${encodeURIComponent(remotePath)}`;
+  setStatus("下载中...");
+  const response = await fetch(
+    `/api/sessions/${activeSessionId}/files/download?remote_path=${encodeURIComponent(remotePath)}`,
+  );
+  if (!response.ok) {
+    appendLogLine(`下载失败: ${await response.text()}`);
+    setStatus("下载失败");
+    return;
+  }
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filenameFromResponse(response, remotePath);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+  setStatus("下载完成");
 });
 
 document.querySelectorAll(".tab").forEach((button) => {
@@ -365,6 +381,13 @@ function valueOf(selector) {
 
 function checked(selector) {
   return document.querySelector(selector).checked;
+}
+
+function filenameFromResponse(response, fallbackPath) {
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  if (match) return match[1];
+  return fallbackPath.split("/").filter(Boolean).pop() || "download.bin";
 }
 
 function bytesToBase64(bytes) {
