@@ -70,6 +70,7 @@ const translations = {
     uploadComplete: "Upload complete",
     uploadFailed: "Upload failed",
     uploadCancelled: "Upload cancelled.",
+    eta: "ETA",
     cancellingUpload: "Cancelling upload...",
     sendingToServer: "Sending to server...",
     networkUploadError: "Network error during upload.",
@@ -135,6 +136,7 @@ const translations = {
     uploadComplete: "上传完成",
     uploadFailed: "上传失败",
     uploadCancelled: "上传已取消。",
+    eta: "预计",
     cancellingUpload: "正在取消上传...",
     sendingToServer: "正在发送到服务端...",
     networkUploadError: "上传过程发生网络错误。",
@@ -315,9 +317,10 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     pollTimer: null,
     cancelled: false,
     fileSize: file.size,
+    startedAt: Date.now(),
   };
   activeUpload = uploadState;
-  showUploadProgress(0, file.size, t("preparingUpload"));
+  showUploadProgress(0, file.size, t("preparingUpload"), uploadState);
   setStatus(t("uploading"));
   try {
     const task = await createUploadTask(activeSessionId, remotePath, file.size);
@@ -327,7 +330,7 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     const xhrUpload = uploadWithXhr(`/api/sessions/${activeSessionId}/files/upload`, form, uploadState);
     uploadState.xhr = xhrUpload.xhr;
     const result = await xhrUpload.promise;
-    showUploadProgress(result.bytes_transferred, file.size, t("uploadComplete"));
+    showUploadProgress(result.bytes_transferred, file.size, t("uploadComplete"), uploadState);
     appendLogLine(`${t("uploadComplete")}: ${JSON.stringify(result)}`);
     setStatus(t("uploadComplete"));
   } catch (error) {
@@ -357,7 +360,7 @@ function uploadWithXhr(url, form, uploadState) {
     xhr.open("POST", url);
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {
-        showUploadProgress(event.loaded, event.total, t("sendingToServer"));
+        showUploadProgress(event.loaded, event.total, t("sendingToServer"), uploadState);
       }
     });
     xhr.addEventListener("load", () => {
@@ -378,7 +381,7 @@ function uploadWithXhr(url, form, uploadState) {
 cancelUploadButton.addEventListener("click", async () => {
   if (!activeUpload) return;
   activeUpload.cancelled = true;
-  showUploadProgress(0, activeUpload.fileSize, t("cancellingUpload"));
+  showUploadProgress(0, activeUpload.fileSize, t("cancellingUpload"), activeUpload);
   if (activeUpload.transferId) {
     await fetch(`/api/transfers/${activeUpload.transferId}`, { method: "DELETE" });
   }
@@ -744,11 +747,13 @@ function filenameFromResponse(response, fallbackPath) {
   return fallbackPath.split("/").filter(Boolean).pop() || "download.bin";
 }
 
-function showUploadProgress(done, total, message) {
+function showUploadProgress(done, total, message, uploadState = activeUpload) {
   uploadProgress.classList.remove("hidden");
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
   uploadProgressBar.value = percent;
-  uploadProgressText.textContent = `${message} ${formatBytes(done)}${total ? ` / ${formatBytes(total)}` : ""}`;
+  const eta = formatUploadEta(done, total, uploadState);
+  uploadProgressText.textContent =
+    `${message} ${formatBytes(done)}${total ? ` / ${formatBytes(total)}` : ""}${eta ? ` · ${t("eta")} ${eta}` : ""}`;
 }
 
 function startUploadPolling(uploadState) {
@@ -763,6 +768,7 @@ function startUploadPolling(uploadState) {
         status.bytes_transferred || 0,
         status.total_bytes || uploadState.fileSize,
         status.message || status.state,
+        uploadState,
       );
       if (["completed", "cancelled", "failed"].includes(status.state)) {
         stopUploadPolling(uploadState);
@@ -785,6 +791,27 @@ function formatBytes(value) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
   return `${(value / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function formatUploadEta(done, total, uploadState) {
+  if (!uploadState || !uploadState.startedAt || !total || done <= 0 || done >= total) return "";
+  const elapsedMs = Date.now() - uploadState.startedAt;
+  if (elapsedMs <= 0) return "";
+  const bytesPerSecond = done / (elapsedMs / 1000);
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "";
+  return formatDuration(Math.floor((total - done) / bytesPerSecond));
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const secs = safeSeconds % 60;
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  parts.push(`${secs}s`);
+  return parts.join(" ");
 }
 
 function t(key) {

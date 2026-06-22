@@ -4,6 +4,7 @@ from paramiko.ssh_exception import SSHException
 
 from webssh.files import (
     FileTransferError,
+    REQUESTED_UPLOAD_COMMAND_BYTES,
     _decode_and_move_command,
     _is_upload_probe_size_failure,
     _max_base64_payload_length,
@@ -113,6 +114,10 @@ def test_upload_command_probe_binary_searches_after_large_command_failure() -> N
     assert selected == 300
     assert attempts[0] == 1024
     assert 300 in attempts
+
+
+def test_upload_command_probe_default_starts_at_one_mib() -> None:
+    assert REQUESTED_UPLOAD_COMMAND_BYTES == 1024 * 1024
 
 
 def test_upload_command_probe_accepts_connection_reset_failures() -> None:

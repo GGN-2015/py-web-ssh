@@ -27,7 +27,7 @@ class FileTransferCancelled(FileTransferError):
 
 ProgressCallback = Callable[[int], None]
 TransferLogCallback = Callable[[str, str, str | None], None]
-REQUESTED_UPLOAD_COMMAND_BYTES = 12 * 1024
+REQUESTED_UPLOAD_COMMAND_BYTES = 1024 * 1024
 MIN_UPLOAD_COMMAND_BYTES = 64
 UPLOAD_BLOCK_SIZE = REQUESTED_UPLOAD_COMMAND_BYTES
 

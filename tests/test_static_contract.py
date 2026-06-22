@@ -84,6 +84,19 @@ def test_upload_cancel_can_abort_the_xhr_request() -> None:
     assert "activeUpload.xhr.abort();" in script
 
 
+def test_upload_progress_displays_eta() -> None:
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert "startedAt: Date.now()" in script
+    assert "function formatUploadEta(done, total, uploadState)" in script
+    assert "function formatDuration(seconds)" in script
+    assert 'parts.push(`${hours}h`);' in script
+    assert 'if (minutes) parts.push(`${minutes}m`);' in script
+    assert 'parts.push(`${secs}s`);' in script
+    assert 't("eta")' in script
+    assert "${eta}" in script
+
+
 def test_frontend_no_longer_exposes_agent_or_known_hosts_controls() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")
