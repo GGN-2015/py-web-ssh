@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -10,126 +10,131 @@
   <body>
     <div id="pin-gate" class="pin-gate" aria-live="polite">
       <form id="pin-form" class="pin-box">
-        <h2>PIN required</h2>
+        <h2 data-i18n="pinRequired">PIN required</h2>
         <label>
-          PIN
+          <span data-i18n="pin">PIN</span>
           <input id="pin-input" type="password" autocomplete="current-password" />
         </label>
-        <button class="primary" type="submit">Unlock</button>
+        <button class="primary" type="submit" data-i18n="unlock">Unlock</button>
         <p id="pin-error" class="pin-error"></p>
       </form>
     </div>
     <main class="app-shell">
       <aside class="sidebar">
         <header class="brand">
-          <h1>py-web-ssh</h1>
-          <p>Web SSH client</p>
+          <div>
+            <h1>py-web-ssh</h1>
+            <p data-i18n="subtitle">Web SSH client</p>
+          </div>
+          <button id="language-toggle" class="language-toggle" type="button">中文</button>
         </header>
 
         <section class="panel collapsible-panel">
-          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="connect-panel">
-            连接
+          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="connect-panel" data-i18n="connect">
+            Connect
           </button>
           <div id="connect-panel" class="stack panel-body" hidden>
-            <div class="section-tabs" aria-label="连接栏目">
-              <button class="section-tab active" type="button">连接</button>
-              <button class="section-tab" type="button" data-open-panel="session-panel">会话</button>
-              <button class="section-tab" type="button" data-open-panel="files-panel">文件</button>
+            <div class="section-tabs" aria-label="Connection panel">
+              <button class="section-tab active" type="button" data-i18n="connect">Connect</button>
+              <button class="section-tab" type="button" data-open-panel="session-panel" data-i18n="session">Session</button>
+              <button class="section-tab" type="button" data-open-panel="files-panel" data-i18n="files">Files</button>
             </div>
             <form id="connect-form" class="stack">
               <label>
-                目标服务器
+                <span data-i18n="host">Target host</span>
                 <input id="host" name="host" required autocomplete="off" placeholder="192.168.1.10" />
               </label>
               <div class="grid-2">
                 <label>
-                  端口
+                  <span data-i18n="port">Port</span>
                   <input id="port" name="port" type="number" min="1" max="65535" value="22" required />
                 </label>
                 <label>
-                  用户名
+                  <span data-i18n="username">Username</span>
                   <input id="username" name="username" required autocomplete="username" />
                 </label>
               </div>
-              <label>
-                口令
+              <label id="password-field">
+                <span data-i18n="password">Password</span>
                 <input id="password" name="password" type="password" autocomplete="current-password" />
               </label>
-              <label>
-                私钥文件
+              <p id="password-lock-note" class="locked-note" hidden data-i18n="passwordLocked">Password is forced by the server.</p>
+              <label id="private-key-field">
+                <span data-i18n="privateKeyFile">Private key file</span>
                 <input id="private-key-file" name="private-key-file" type="file" />
               </label>
+              <p id="private-key-lock-note" class="locked-note" hidden data-i18n="privateKeyLocked">Private key file is forced by the server.</p>
               <label>
-                私钥口令
+                <span data-i18n="privateKeyPassphrase">Private key passphrase</span>
                 <input id="private-key-passphrase" name="private-key-passphrase" type="password" />
               </label>
               <div class="checks">
-                <label><input id="legacy-algorithms" type="checkbox" checked /> legacy 算法</label>
-                <label><input id="allow-agent" type="checkbox" /> SSH agent</label>
-                <label><input id="look-for-keys" type="checkbox" /> 服务端本机密钥</label>
-                <label><input id="strict-host-key" type="checkbox" /> known_hosts 校验</label>
+                <label><input id="legacy-algorithms" type="checkbox" checked /> <span data-i18n="legacyAlgorithms">Legacy algorithms</span></label>
+                <label><input id="allow-agent" type="checkbox" /> <span data-i18n="sshAgent">SSH agent</span></label>
+                <label><input id="look-for-keys" type="checkbox" /> <span data-i18n="serverKeys">Server local keys</span></label>
+                <label><input id="strict-host-key" type="checkbox" /> <span data-i18n="knownHosts">known_hosts check</span></label>
               </div>
-              <button class="primary" type="submit">连接</button>
+              <button class="primary" type="submit" data-i18n="connect">Connect</button>
             </form>
           </div>
         </section>
 
         <section class="panel collapsible-panel">
-          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="session-panel">
-            会话
+          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="session-panel" data-i18n="session">
+            Session
           </button>
           <div id="session-panel" class="stack panel-body" hidden>
-            <div class="section-tabs" aria-label="会话栏目">
-              <button class="section-tab" type="button" data-open-panel="connect-panel">连接</button>
-              <button class="section-tab active" type="button">会话</button>
-              <button class="section-tab" type="button" data-open-panel="files-panel">文件</button>
+            <div class="section-tabs" aria-label="Session panel">
+              <button class="section-tab" type="button" data-open-panel="connect-panel" data-i18n="connect">Connect</button>
+              <button class="section-tab active" type="button" data-i18n="session">Session</button>
+              <button class="section-tab" type="button" data-open-panel="files-panel" data-i18n="files">Files</button>
             </div>
             <label>
               UUID
               <input id="session-id" autocomplete="off" spellcheck="false" />
             </label>
             <div class="button-row">
-              <button id="reconnect" type="button">重连</button>
-              <button id="disconnect" type="button">断开 SSH</button>
+              <button id="reconnect" type="button" data-i18n="reconnect">Reconnect</button>
+              <button id="disconnect" type="button" data-i18n="disconnect">Disconnect SSH</button>
             </div>
-            <a id="logs-link" class="quiet-link" href="#" target="_blank" rel="noreferrer">打开完整日志</a>
+            <a id="logs-link" class="quiet-link" href="#" target="_blank" rel="noreferrer" data-i18n="openLogs">Open full logs</a>
           </div>
         </section>
 
         <section class="panel collapsible-panel">
-          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="files-panel">
-            文件
+          <button class="panel-toggle" type="button" aria-expanded="false" aria-controls="files-panel" data-i18n="files">
+            Files
           </button>
           <div id="files-panel" class="panel-body" hidden>
-            <div class="section-tabs" aria-label="文件栏目">
-              <button class="section-tab" type="button" data-open-panel="connect-panel">连接</button>
-              <button class="section-tab" type="button" data-open-panel="session-panel">会话</button>
-              <button class="section-tab active" type="button">文件</button>
+            <div class="section-tabs" aria-label="Files panel">
+              <button class="section-tab" type="button" data-open-panel="connect-panel" data-i18n="connect">Connect</button>
+              <button class="section-tab" type="button" data-open-panel="session-panel" data-i18n="session">Session</button>
+              <button class="section-tab active" type="button" data-i18n="files">Files</button>
             </div>
             <form id="upload-form" class="stack">
               <label>
-                上传到远端路径
+                <span data-i18n="uploadRemotePath">Upload remote path</span>
                 <input id="upload-path" placeholder="/tmp/file.txt" />
               </label>
               <label>
-                本地文件
+                <span data-i18n="localFile">Local file</span>
                 <input id="upload-file" type="file" />
               </label>
-              <button type="submit">上传</button>
+              <button type="submit" data-i18n="upload">Upload</button>
             </form>
             <div id="upload-progress" class="transfer-progress hidden">
               <div class="progress-row">
-                <span id="upload-progress-text">等待上传</span>
-                <button id="cancel-upload" type="button">取消上传</button>
+                <span id="upload-progress-text" data-i18n="waitingUpload">Waiting for upload</span>
+                <button id="cancel-upload" type="button" data-i18n="cancelUpload">Cancel upload</button>
               </div>
               <progress id="upload-progress-bar" max="100" value="0"></progress>
             </div>
             <form id="download-form" class="stack compact">
               <label>
-                下载远端路径
+                <span data-i18n="downloadRemotePath">Download remote path</span>
                 <input id="download-path" placeholder="/tmp/file.txt" />
               </label>
-              <button type="submit">下载</button>
+              <button type="submit" data-i18n="download">Download</button>
             </form>
           </div>
         </section>
@@ -138,12 +143,12 @@
       <section class="workspace">
         <div class="toolbar">
           <div>
-            <strong id="status">未连接</strong>
+            <strong id="status" data-i18n="notConnected">Not connected</strong>
             <span id="session-label"></span>
           </div>
           <div class="tabs" role="tablist">
-            <button class="tab active" data-tab="terminal" type="button">终端</button>
-            <button class="tab" data-tab="logs" type="button">日志</button>
+            <button class="tab active" data-tab="terminal" type="button" data-i18n="terminal">Terminal</button>
+            <button class="tab" data-tab="logs" type="button" data-i18n="logs">Logs</button>
           </div>
         </div>
         <div id="terminal-pane" class="pane active">

@@ -13,6 +13,8 @@
 - 日志页面：`/sessions/{uuid}/logs` 展示完整连接、认证、错误和文件传输日志。
 - 文件传输：参考 `simple-ssh-copy` 思路，不使用 SFTP/SCP；每次传输都按连接配置新建独立 SSH 连接，使用远端 `base64` shell 命令上传/下载。上传先写远端临时文件，完成后再 `mv` 到最终路径，并支持进度显示和取消。
 - 可选 PIN 门禁：服务端传入 `--pin` 后，网页启动时必须先输入正确 PIN；验证成功后浏览器会保存加盐哈希 cookie，后端会保护 HTTP API、日志页面、文件接口和 WebSocket。
+- 启动锁定策略：支持 `--lock-host`、`--lock-username`、`--lock-pwd`、`--lock-private-key`，可从服务端强制绑定目标主机、用户名、密码和服务端侧私钥文件。前端会锁定或隐藏对应控件，后端仍会校验并覆盖敏感字段。
+- 中英双语：默认英文，网页和日志页都支持中英切换；语言选择会长期保存到 `py_web_ssh_lang` cookie。
 - 浏览器客户端 session：首次访问时服务端会分配独立的浏览器 session UUID，并写入 HttpOnly cookie；它与 SSH 会话 UUID 分离。
 - 左侧控制面板：连接、会话、文件三个栏目改为互斥折叠面板，一次最多展开一个，也可以全部折叠。
 
@@ -44,10 +46,21 @@ uvicorn webssh.app:app --host 0.0.0.0 --port 8022
 py-web-ssh --pin 123456
 ```
 
+锁定连接目标或凭据：
+
+```bash
+py-web-ssh --lock-host server.example.com --lock-username deploy
+py-web-ssh --lock-pwd 'ssh-password'
+py-web-ssh --lock-private-key C:\secrets\id_ed25519
+```
+
+`--lock-pwd` 和 `--lock-private-key` 的值只在服务端使用，不会通过配置接口发送给浏览器。`--lock-private-key` 指向的是服务端本机文件路径，不是浏览器上传的文件。
+
 前端默认从 jsDelivr 加载 xterm.js、fit addon 和 serialize addon。离线内网部署时，请把这些静态资源 vendoring 到 `webssh/static/` 并替换 `index.html` 里的 CDN 地址。
 
 ## API 概览
 
+- `GET /api/config` 查看非敏感的服务端公开配置和锁定状态。
 - `POST /api/sessions` 创建 SSH 会话。
 - `GET /api/sessions/{uuid}` 查看会话状态。
 - `GET /api/sessions/{uuid}/logs` 获取完整日志 JSON。

@@ -16,7 +16,7 @@ def test_auth_status_when_pin_is_disabled() -> None:
     response = client.get("/api/auth/status")
 
     assert response.status_code == 200
-    assert response.json() == {"enabled": False}
+    assert response.json() == {"enabled": False, "authorized": True}
 
 
 def test_pin_protects_api_routes_until_login() -> None:

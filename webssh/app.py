@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import argparse
+import base64
 from pathlib import Path
 from typing import Annotated
 
@@ -21,6 +21,8 @@ from .files import (
     upload_file_via_ssh,
 )
 from .models import ConnectRequest, CreateSessionResponse, FileTransferResponse
+from .runtime_config import add_runtime_lock_arguments, configure_runtime_locks
+from . import runtime_config as runtime_config_module
 from .session import SessionManager
 from .transfers import TransferManager
 
@@ -60,8 +62,18 @@ def index() -> FileResponse:
 
 
 @app.get("/api/auth/status")
-def auth_status() -> JSONResponse:
-    return JSONResponse(auth.pin_auth.status_payload())
+def auth_status(request: Request) -> JSONResponse:
+    return JSONResponse(
+        {
+            **auth.pin_auth.status_payload(),
+            "authorized": auth.pin_auth.is_request_authorized(request),
+        }
+    )
+
+
+@app.get("/api/config")
+def public_config() -> JSONResponse:
+    return JSONResponse(runtime_config_module.runtime_config.public_payload())
 
 
 @app.post("/api/auth/login")
@@ -83,7 +95,8 @@ def logs_page(session_id: str) -> HTMLResponse:
 
 @app.post("/api/sessions", response_model=CreateSessionResponse)
 def create_session(config: ConnectRequest) -> CreateSessionResponse:
-    session = sessions.create(config)
+    locked_config = runtime_config_module.runtime_config.apply_to_connect_request(config)
+    session = sessions.create(locked_config)
     return CreateSessionResponse(
         session_id=session.id,
         logs_url=f"/sessions/{session.id}/logs",
@@ -312,6 +325,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default=DEFAULT_HOST, help="Host interface to bind.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to listen on.")
     add_pin_argument(parser)
+    add_runtime_lock_arguments(parser)
     return parser
 
 
@@ -321,6 +335,12 @@ def main() -> None:
     args = build_arg_parser().parse_args()
 
     configure_pin(args.pin)
+    configure_runtime_locks(
+        lock_host=args.lock_host,
+        lock_username=args.lock_username,
+        lock_password=args.lock_pwd,
+        lock_private_key=args.lock_private_key,
+    )
     uvicorn.run("webssh.app:app", host=args.host, port=args.port, reload=False)
 
 

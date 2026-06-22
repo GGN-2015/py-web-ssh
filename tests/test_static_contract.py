@@ -35,3 +35,35 @@ def test_connect_submit_uses_fetch_without_page_navigation() -> None:
     assert "window.location =" not in script
     assert "window.location.href" not in script
     assert "location.href" not in script
+
+
+def test_frontend_defaults_to_english_and_has_language_cookie() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert '<html lang="en">' in markup
+    assert 'const LANGUAGE_COOKIE = "py_web_ssh_lang";' in script
+    assert "applyLanguage(currentLanguage);" in script
+    assert "setLanguageCookie(currentLanguage);" in script
+    assert "zh-CN" in script
+
+
+def test_frontend_has_lock_aware_fields_without_sensitive_values() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'id="password-lock-note"' in markup
+    assert 'id="private-key-lock-note"' in markup
+    assert "Password is forced by the server." in markup
+    assert "Private key file is forced by the server." in markup
+    assert 'fetch("/api/config")' in script
+    assert 'lockTextInput("#host", locks.host);' in script
+    assert 'lockTextInput("#username", locks.username);' in script
+
+
+def test_upload_cancel_can_abort_the_xhr_request() -> None:
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert "return { xhr, promise };" in script
+    assert "uploadState.xhr = xhrUpload.xhr;" in script
+    assert "activeUpload.xhr.abort();" in script

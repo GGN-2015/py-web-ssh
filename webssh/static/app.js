@@ -13,6 +13,136 @@ const uploadProgress = document.querySelector("#upload-progress");
 const uploadProgressText = document.querySelector("#upload-progress-text");
 const uploadProgressBar = document.querySelector("#upload-progress-bar");
 const cancelUploadButton = document.querySelector("#cancel-upload");
+const languageToggle = document.querySelector("#language-toggle");
+
+const LANGUAGE_COOKIE = "py_web_ssh_lang";
+const translations = {
+  en: {
+    pinRequired: "PIN required",
+    pin: "PIN",
+    unlock: "Unlock",
+    subtitle: "Web SSH client",
+    connect: "Connect",
+    session: "Session",
+    files: "Files",
+    host: "Target host",
+    port: "Port",
+    username: "Username",
+    password: "Password",
+    passwordLocked: "Password is forced by the server.",
+    privateKeyFile: "Private key file",
+    privateKeyLocked: "Private key file is forced by the server.",
+    privateKeyPassphrase: "Private key passphrase",
+    legacyAlgorithms: "Legacy algorithms",
+    sshAgent: "SSH agent",
+    serverKeys: "Server local keys",
+    knownHosts: "known_hosts check",
+    reconnect: "Reconnect",
+    disconnect: "Disconnect SSH",
+    openLogs: "Open full logs",
+    uploadRemotePath: "Upload remote path",
+    localFile: "Local file",
+    upload: "Upload",
+    waitingUpload: "Waiting for upload",
+    cancelUpload: "Cancel upload",
+    downloadRemotePath: "Download remote path",
+    download: "Download",
+    terminal: "Terminal",
+    logs: "Logs",
+    notConnected: "Not connected",
+    creatingSession: "Creating session...",
+    createFailed: "Create failed",
+    createSessionFailed: "Create session failed",
+    ready: "Ready",
+    invalidPin: "Invalid PIN.",
+    uploadNeedsInputs: "Upload requires a session UUID, remote path, and local file.",
+    preparingUpload: "Preparing upload...",
+    uploading: "Uploading...",
+    uploadComplete: "Upload complete",
+    uploadFailed: "Upload failed",
+    uploadCancelled: "Upload cancelled.",
+    cancellingUpload: "Cancelling upload...",
+    sendingToServer: "Sending to server...",
+    networkUploadError: "Network error during upload.",
+    uploadRequestAborted: "Upload request aborted.",
+    downloadNeedsInputs: "Download requires a session UUID and remote path.",
+    downloading: "Downloading...",
+    downloadFailed: "Download failed",
+    downloadComplete: "Download complete",
+    connectingWebSocket: "WebSocket connecting...",
+    webSocketConnected: "WebSocket connected",
+    webSocketClosed: "WebSocket closed; reconnect is available",
+    webSocketError: "WebSocket error",
+    boundSession: "Bound session",
+    sessionState: "Session state",
+    lockedConfigFailed: "Could not load server configuration.",
+    languageButton: "中文",
+  },
+  zh: {
+    pinRequired: "需要 PIN",
+    pin: "PIN",
+    unlock: "解锁",
+    subtitle: "Web SSH 客户端",
+    connect: "连接",
+    session: "会话",
+    files: "文件",
+    host: "目标服务器",
+    port: "端口",
+    username: "用户名",
+    password: "口令",
+    passwordLocked: "口令已强制绑定",
+    privateKeyFile: "私钥文件",
+    privateKeyLocked: "私钥文件已强制绑定",
+    privateKeyPassphrase: "私钥口令",
+    legacyAlgorithms: "legacy 算法",
+    sshAgent: "SSH agent",
+    serverKeys: "服务端本机密钥",
+    knownHosts: "known_hosts 校验",
+    reconnect: "重连",
+    disconnect: "断开 SSH",
+    openLogs: "打开完整日志",
+    uploadRemotePath: "上传到远端路径",
+    localFile: "本地文件",
+    upload: "上传",
+    waitingUpload: "等待上传",
+    cancelUpload: "取消上传",
+    downloadRemotePath: "下载远端路径",
+    download: "下载",
+    terminal: "终端",
+    logs: "日志",
+    notConnected: "未连接",
+    creatingSession: "创建会话...",
+    createFailed: "创建失败",
+    createSessionFailed: "创建会话失败",
+    ready: "就绪",
+    invalidPin: "PIN 不正确。",
+    uploadNeedsInputs: "上传需要会话 UUID、远端路径和本地文件。",
+    preparingUpload: "准备上传...",
+    uploading: "上传中...",
+    uploadComplete: "上传完成",
+    uploadFailed: "上传失败",
+    uploadCancelled: "上传已取消。",
+    cancellingUpload: "正在取消上传...",
+    sendingToServer: "正在发送到服务端...",
+    networkUploadError: "上传过程发生网络错误。",
+    uploadRequestAborted: "上传请求已中止。",
+    downloadNeedsInputs: "下载需要会话 UUID 和远端路径。",
+    downloading: "下载中...",
+    downloadFailed: "下载失败",
+    downloadComplete: "下载完成",
+    connectingWebSocket: "WebSocket 连接中...",
+    webSocketConnected: "WebSocket 已连接",
+    webSocketClosed: "WebSocket 已关闭；可以重连",
+    webSocketError: "WebSocket 错误",
+    boundSession: "绑定会话",
+    sessionState: "会话状态",
+    lockedConfigFailed: "无法加载服务端配置。",
+    languageButton: "English",
+  },
+};
+
+let currentLanguage = readLanguageCookie();
+let runtimeConfig = { locks: {} };
 
 const term = new Terminal({
   cursorBlink: true,
@@ -56,17 +186,22 @@ let lastAppliedSeq = 0;
 let snapshotTimer = null;
 let activeUpload = null;
 
+applyLanguage(currentLanguage);
+initialize();
+bindControlPanels();
+
 if (activeSessionId) {
   sessionInput.value = activeSessionId;
   updateSessionUi(activeSessionId);
 }
 
-checkPinGate();
-bindControlPanels();
-
 window.addEventListener("resize", () => {
   fitAddon.fit();
   sendResize();
+});
+
+languageToggle.addEventListener("click", () => {
+  applyLanguage(currentLanguage === "en" ? "zh" : "en");
 });
 
 term.onData((data) => {
@@ -78,7 +213,7 @@ term.onData((data) => {
 
 document.querySelector("#connect-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  setStatus("创建会话...");
+  setStatus(t("creatingSession"));
   const privateKey = await readPrivateKey();
   const payload = {
     host: valueOf("#host"),
@@ -101,8 +236,8 @@ document.querySelector("#connect-form").addEventListener("submit", async (event)
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    appendLogLine(`创建会话失败: ${await response.text()}`);
-    setStatus("创建失败");
+    appendLogLine(`${t("createSessionFailed")}: ${await response.text()}`);
+    setStatus(t("createFailed"));
     return;
   }
   const result = await response.json();
@@ -122,13 +257,14 @@ pinForm.addEventListener("submit", async (event) => {
     body: JSON.stringify({ pin: pinInput.value }),
   });
   if (!response.ok) {
-    pinError.textContent = "Invalid PIN.";
+    pinError.textContent = t("invalidPin");
     pinInput.select();
     return;
   }
   pinInput.value = "";
   pinGate.classList.add("hidden");
-  setStatus("Ready");
+  setStatus(t("ready"));
+  await loadRuntimeConfig();
 });
 
 document.querySelector("#reconnect").addEventListener("click", () => {
@@ -153,14 +289,13 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
   const file = document.querySelector("#upload-file").files[0];
   const remotePath = valueOf("#upload-path");
   if (!activeSessionId || !file || !remotePath) {
-    appendLogLine("上传需要会话 UUID、远端路径和本地文件。");
+    appendLogLine(t("uploadNeedsInputs"));
     return;
   }
   const form = new FormData();
   form.append("remote_path", remotePath);
   form.append("total_bytes", String(file.size));
   form.append("file", file);
-  let xhr = null;
   const uploadState = {
     xhr: null,
     transferId: null,
@@ -169,22 +304,22 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     fileSize: file.size,
   };
   activeUpload = uploadState;
-  showUploadProgress(0, file.size, "准备上传...");
-  setStatus("上传中...");
+  showUploadProgress(0, file.size, t("preparingUpload"));
+  setStatus(t("uploading"));
   try {
     const task = await createUploadTask(activeSessionId, remotePath, file.size);
     uploadState.transferId = task.transfer_id;
     form.append("transfer_id", uploadState.transferId);
     startUploadPolling(uploadState);
-    xhr = uploadWithXhr(`/api/sessions/${activeSessionId}/files/upload`, form, uploadState);
-    uploadState.xhr = xhr;
-    const result = await xhr;
-    showUploadProgress(result.bytes_transferred, file.size, "上传完成");
-    appendLogLine(`上传完成: ${JSON.stringify(result)}`);
-    setStatus("上传完成");
+    const xhrUpload = uploadWithXhr(`/api/sessions/${activeSessionId}/files/upload`, form, uploadState);
+    uploadState.xhr = xhrUpload.xhr;
+    const result = await xhrUpload.promise;
+    showUploadProgress(result.bytes_transferred, file.size, t("uploadComplete"));
+    appendLogLine(`${t("uploadComplete")}: ${JSON.stringify(result)}`);
+    setStatus(t("uploadComplete"));
   } catch (error) {
-    appendLogLine(uploadState.cancelled ? "上传已取消。" : `上传失败: ${error}`);
-    setStatus(uploadState.cancelled ? "上传已取消" : "上传失败");
+    appendLogLine(uploadState.cancelled ? t("uploadCancelled") : `${t("uploadFailed")}: ${error}`);
+    setStatus(uploadState.cancelled ? t("uploadCancelled") : t("uploadFailed"));
   } finally {
     stopUploadPolling(uploadState);
     if (activeUpload === uploadState) activeUpload = null;
@@ -204,12 +339,12 @@ async function createUploadTask(sessionId, remotePath, totalBytes) {
 }
 
 function uploadWithXhr(url, form, uploadState) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise((resolve, reject) => {
     xhr.open("POST", url);
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {
-        showUploadProgress(event.loaded, event.total, "正在发送到服务端...");
+        showUploadProgress(event.loaded, event.total, t("sendingToServer"));
       }
     });
     xhr.addEventListener("load", () => {
@@ -219,16 +354,18 @@ function uploadWithXhr(url, form, uploadState) {
         reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
       }
     });
-    xhr.addEventListener("error", () => reject(new Error("Network error during upload.")));
-    xhr.addEventListener("abort", () => reject(new Error("Upload request aborted.")));
+    xhr.addEventListener("error", () => reject(new Error(t("networkUploadError"))));
+    xhr.addEventListener("abort", () => reject(new Error(t("uploadRequestAborted"))));
     xhr.send(form);
   });
+  uploadState.xhr = xhr;
+  return { xhr, promise };
 }
 
 cancelUploadButton.addEventListener("click", async () => {
   if (!activeUpload) return;
   activeUpload.cancelled = true;
-  showUploadProgress(0, activeUpload.fileSize, "正在取消上传...");
+  showUploadProgress(0, activeUpload.fileSize, t("cancellingUpload"));
   if (activeUpload.transferId) {
     await fetch(`/api/transfers/${activeUpload.transferId}`, { method: "DELETE" });
   }
@@ -239,16 +376,16 @@ document.querySelector("#download-form").addEventListener("submit", async (event
   event.preventDefault();
   const remotePath = valueOf("#download-path");
   if (!activeSessionId || !remotePath) {
-    appendLogLine("下载需要会话 UUID 和远端路径。");
+    appendLogLine(t("downloadNeedsInputs"));
     return;
   }
-  setStatus("下载中...");
+  setStatus(t("downloading"));
   const response = await fetch(
     `/api/sessions/${activeSessionId}/files/download?remote_path=${encodeURIComponent(remotePath)}`,
   );
   if (!response.ok) {
-    appendLogLine(`下载失败: ${await response.text()}`);
-    setStatus("下载失败");
+    appendLogLine(`${t("downloadFailed")}: ${await response.text()}`);
+    setStatus(t("downloadFailed"));
     return;
   }
   const blob = await response.blob();
@@ -259,7 +396,7 @@ document.querySelector("#download-form").addEventListener("submit", async (event
   link.click();
   link.remove();
   URL.revokeObjectURL(link.href);
-  setStatus("下载完成");
+  setStatus(t("downloadComplete"));
 });
 
 document.querySelectorAll(".tab").forEach((button) => {
@@ -316,13 +453,13 @@ function connectWebSocket(sessionId) {
     ws.close();
   }
   term.focus();
-  setStatus("WebSocket 连接中...");
+  setStatus(t("connectingWebSocket"));
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${protocol}://${window.location.host}/ws/sessions/${sessionId}`);
   ws = socket;
   socket.addEventListener("open", () => {
     if (ws !== socket) return;
-    setStatus("WebSocket 已连接");
+    setStatus(t("webSocketConnected"));
     sendResize();
   });
   socket.addEventListener("message", async (event) => {
@@ -332,10 +469,10 @@ function connectWebSocket(sessionId) {
   });
   socket.addEventListener("close", () => {
     if (ws !== socket) return;
-    setStatus("WebSocket closed; reconnect is available");
+    setStatus(t("webSocketClosed"));
   });
   socket.addEventListener("error", () => {
-    if (ws === socket) setStatus("WebSocket 错误");
+    if (ws === socket) setStatus(t("webSocketError"));
   });
 }
 
@@ -344,29 +481,75 @@ async function checkPinGate() {
   if (!response.ok) {
     pinGate.classList.remove("hidden");
     pinInput.focus();
-    return;
+    return false;
   }
   const status = await response.json();
-  if (status.enabled) {
+  if (status.enabled && !status.authorized) {
     pinGate.classList.remove("hidden");
     pinInput.focus();
+    return false;
   } else {
     pinGate.classList.add("hidden");
+    return true;
+  }
+}
+
+async function initialize() {
+  if (await checkPinGate()) {
+    await loadRuntimeConfig();
+  }
+}
+
+async function loadRuntimeConfig() {
+  const response = await fetch("/api/config");
+  if (!response.ok) {
+    appendLogLine(t("lockedConfigFailed"));
+    return;
+  }
+  runtimeConfig = await response.json();
+  applyRuntimeLocks(runtimeConfig);
+}
+
+function applyRuntimeLocks(config) {
+  const locks = config.locks || {};
+  lockTextInput("#host", locks.host);
+  lockTextInput("#username", locks.username);
+
+  const passwordLocked = Boolean(locks.password && locks.password.enabled);
+  document.querySelector("#password-field").hidden = passwordLocked;
+  document.querySelector("#password").disabled = passwordLocked;
+  document.querySelector("#password").value = "";
+  document.querySelector("#password-lock-note").hidden = !passwordLocked;
+
+  const privateKeyLocked = Boolean(locks.private_key && locks.private_key.enabled);
+  document.querySelector("#private-key-field").hidden = privateKeyLocked;
+  document.querySelector("#private-key-file").disabled = privateKeyLocked;
+  document.querySelector("#private-key-file").value = "";
+  document.querySelector("#private-key-lock-note").hidden = !privateKeyLocked;
+}
+
+function lockTextInput(selector, lock) {
+  const input = document.querySelector(selector);
+  const locked = Boolean(lock && lock.enabled);
+  input.readOnly = locked;
+  input.classList.toggle("locked", locked);
+  if (locked) {
+    input.value = lock.value || "";
   }
 }
 
 async function handleMessage(message) {
   if (message.type === "session") {
-    appendLogLine(`绑定会话 ${message.session_id}`);
+    appendLogLine(`${t("boundSession")} ${message.session_id}`);
   } else if (message.type === "replay") {
     await replayTerminal(message);
-    setStatus(`会话状态: ${message.state}`);
+    setStatus(`${t("sessionState")}: ${message.state}`);
     if (message.warning) appendLogLine(message.warning);
     for (const entry of message.logs || []) appendLogEntry(entry);
   } else if (message.type === "output") {
     await writeChunk(message);
   } else if (message.type === "status") {
-    setStatus(`会话状态: ${message.state}`);
+    setStatus(`${t("sessionState")}: ${message.state}`);
   } else if (message.type === "log") {
     appendLogEntry(message.entry);
   } else if (message.type === "warning") {
@@ -423,6 +606,10 @@ function sendSnapshot() {
 window.addEventListener("beforeunload", sendSnapshot);
 
 async function readPrivateKey() {
+  const lock = runtimeConfig.locks ? runtimeConfig.locks.private_key : null;
+  if (lock && lock.enabled) {
+    return "";
+  }
   const file = document.querySelector("#private-key-file").files[0];
   return file ? await file.text() : "";
 }
@@ -434,6 +621,7 @@ function updateSessionUi(sessionId) {
 
 function setStatus(text) {
   statusElement.textContent = text;
+  statusElement.removeAttribute("data-i18n");
 }
 
 function appendLogEntry(entry) {
@@ -502,6 +690,34 @@ function formatBytes(value) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
   return `${(value / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function t(key) {
+  return translations[currentLanguage][key] || translations.en[key] || key;
+}
+
+function applyLanguage(language) {
+  currentLanguage = translations[language] ? language : "en";
+  document.documentElement.lang = currentLanguage === "zh" ? "zh-CN" : "en";
+  document.querySelectorAll("[data-i18n]").forEach((element) => {
+    const key = element.getAttribute("data-i18n");
+    element.textContent = t(key);
+  });
+  languageToggle.textContent = t("languageButton");
+  setLanguageCookie(currentLanguage);
+  if (statusElement.getAttribute("data-i18n") === "notConnected") {
+    statusElement.textContent = t("notConnected");
+  }
+}
+
+function readLanguageCookie() {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${LANGUAGE_COOKIE}=([^;]+)`));
+  const value = match ? decodeURIComponent(match[1]) : "en";
+  return translations[value] ? value : "en";
+}
+
+function setLanguageCookie(language) {
+  document.cookie = `${LANGUAGE_COOKIE}=${encodeURIComponent(language)}; Max-Age=31536000; Path=/; SameSite=Lax`;
 }
 
 function bytesToBase64(bytes) {

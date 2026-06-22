@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,15 +8,38 @@
   </head>
   <body class="logs-page">
     <main class="log-document">
-      <header>
-        <h1>会话日志</h1>
-        <p id="log-session-id">__SESSION_ID__</p>
+      <header class="log-header-row">
+        <div>
+          <h1 data-i18n="sessionLogs">Session logs</h1>
+          <p id="log-session-id">__SESSION_ID__</p>
+        </div>
+        <button id="language-toggle" class="language-toggle" type="button">中文</button>
       </header>
-      <pre id="full-logs">加载中...</pre>
+      <pre id="full-logs" data-i18n="loading">Loading...</pre>
     </main>
     <script>
       const sessionId = "__SESSION_ID__";
       const fullLogs = document.querySelector("#full-logs");
+      const languageToggle = document.querySelector("#language-toggle");
+      const LANGUAGE_COOKIE = "py_web_ssh_lang";
+      const translations = {
+        en: {
+          sessionLogs: "Session logs",
+          loading: "Loading...",
+          languageButton: "中文",
+        },
+        zh: {
+          sessionLogs: "会话日志",
+          loading: "加载中...",
+          languageButton: "English",
+        },
+      };
+      let currentLanguage = readLanguageCookie();
+
+      applyLanguage(currentLanguage);
+      languageToggle.addEventListener("click", () => {
+        applyLanguage(currentLanguage === "en" ? "zh" : "en");
+      });
 
       function formatEntry(entry) {
         const details = entry.details ? `\n${entry.details}` : "";
@@ -26,15 +49,34 @@
       async function refresh() {
         const response = await fetch(`/api/sessions/${sessionId}/logs`);
         if (!response.ok) {
+          fullLogs.removeAttribute("data-i18n");
           fullLogs.textContent = await response.text();
           return;
         }
         const payload = await response.json();
+        fullLogs.removeAttribute("data-i18n");
         fullLogs.textContent = [
           JSON.stringify(payload.session, null, 2),
           "",
           ...payload.logs.map(formatEntry),
         ].join("\n");
+      }
+
+      function applyLanguage(language) {
+        currentLanguage = translations[language] ? language : "en";
+        document.documentElement.lang = currentLanguage === "zh" ? "zh-CN" : "en";
+        document.querySelectorAll("[data-i18n]").forEach((element) => {
+          const key = element.getAttribute("data-i18n");
+          element.textContent = translations[currentLanguage][key] || translations.en[key] || key;
+        });
+        languageToggle.textContent = translations[currentLanguage].languageButton;
+        document.cookie = `${LANGUAGE_COOKIE}=${encodeURIComponent(currentLanguage)}; Max-Age=31536000; Path=/; SameSite=Lax`;
+      }
+
+      function readLanguageCookie() {
+        const match = document.cookie.match(new RegExp(`(?:^|; )${LANGUAGE_COOKIE}=([^;]+)`));
+        const value = match ? decodeURIComponent(match[1]) : "en";
+        return translations[value] ? value : "en";
       }
 
       refresh();
