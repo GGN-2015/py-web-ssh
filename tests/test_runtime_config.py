@@ -259,6 +259,61 @@ def test_ban_ipv6_allows_ipv4_and_domain_targets(monkeypatch) -> None:
         assert response.status_code == 200
 
 
+def test_ban_host_rejects_matching_hosts_with_dns_failure_message(monkeypatch) -> None:
+    configure_runtime_locks(
+        ban_hosts=[
+            "secret.internal",
+            "*.corp.local",
+            "prod*db.internal",
+            "[2001:db8::10]",
+        ]
+    )
+    monkeypatch.setattr(app_module, "sessions", NoStartSessionManager(autostart_reaper=False))
+    client = TestClient(app)
+
+    for host in [
+        "secret.internal",
+        "SECRET.INTERNAL",
+        "db.corp.local",
+        "prod-db.internal",
+        "proddb.internal",
+        "2001:db8::10",
+    ]:
+        response = client.post(
+            "/api/sessions",
+            json={"host": host, "username": "root"},
+        )
+
+        assert response.status_code == 502
+        assert response.json()["detail"] == "DNS resolution failed."
+        assert "ban" not in response.text.lower()
+
+
+def test_ban_host_allows_non_matching_hosts(monkeypatch) -> None:
+    configure_runtime_locks(ban_hosts=["*.corp.local", "secret.internal"])
+    manager = NoStartSessionManager(autostart_reaper=False)
+    monkeypatch.setattr(app_module, "sessions", manager)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/sessions",
+        json={"host": "public.example.com", "username": "root"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_public_config_does_not_expose_ban_host_patterns() -> None:
+    configure_runtime_locks(ban_hosts=["secret.internal", "*.corp.local"])
+    client = TestClient(app)
+
+    payload = client.get("/api/config").json()
+
+    assert "ban_host" not in str(payload)
+    assert "secret.internal" not in str(payload)
+    assert "*.corp.local" not in str(payload)
+
+
 def test_public_config_exposes_security_policies() -> None:
     configure_runtime_locks(ban_lan=True, ban_dns=True, ban_ipv6=True)
     client = TestClient(app)

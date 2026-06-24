@@ -417,6 +417,7 @@ def main(argv: list[str] | None = None) -> None:
         ban_lan=args.ban_lan,
         ban_dns=args.ban_dns,
         ban_ipv6=args.ban_ipv6,
+        ban_hosts=args.ban_host,
     )
     run_server(args.host, args.port, launch_browser=args.launch_browser, auto_port=args.auto_port)
 

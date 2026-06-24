@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +39,7 @@ class RuntimeConfig:
     ban_lan: bool = False
     ban_dns: bool = False
     ban_ipv6: bool = False
+    ban_hosts: tuple[str, ...] = ()
 
     @property
     def lock_password_enabled(self) -> bool:
@@ -83,6 +85,9 @@ class RuntimeConfig:
             data["username"] = self.lock_username
 
         target_host = str(data.get("host") or "")
+        if _is_banned_host(target_host, self.ban_hosts):
+            raise HTTPException(status_code=502, detail="DNS resolution failed.")
+
         target_address = _parse_ip_literal(target_host)
         if self.ban_dns and target_address is None:
             raise HTTPException(status_code=403, detail="DNS hostnames are blocked by the server.")
@@ -116,6 +121,7 @@ def configure_runtime_locks(
     ban_lan: bool = False,
     ban_dns: bool = False,
     ban_ipv6: bool = False,
+    ban_hosts: list[str] | tuple[str, ...] | None = None,
 ) -> None:
     global runtime_config
     key_path = Path(lock_private_key).expanduser().resolve() if lock_private_key else None
@@ -131,6 +137,7 @@ def configure_runtime_locks(
         ban_lan=ban_lan,
         ban_dns=ban_dns,
         ban_ipv6=ban_ipv6,
+        ban_hosts=_normalize_ban_hosts(ban_hosts),
     )
 
 
@@ -189,6 +196,16 @@ def add_runtime_lock_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Reject SSH targets entered as IPv6 address literals.",
     )
+    parser.add_argument(
+        "--ban-host",
+        action="append",
+        default=[],
+        metavar="HOST_PATTERN",
+        help=(
+            "Reject SSH targets matching this backend-only host pattern. "
+            "Repeat to add more patterns. Use * as a wildcard."
+        ),
+    )
 
 
 def _read_locked_private_key(path: Path) -> str:
@@ -234,3 +251,29 @@ def _is_lan_ip_address(
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         return _is_lan_ip_address(address.ipv4_mapped)
     return any(address in network for network in LAN_IP_NETWORKS)
+
+
+def _normalize_ban_hosts(values: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    if values is None:
+        return ()
+    return tuple(value.strip() for value in values if value and value.strip())
+
+
+def _is_banned_host(host: str, patterns: tuple[str, ...]) -> bool:
+    normalized_host = _normalize_host_for_match(host)
+    return any(_host_pattern_matches(normalized_host, pattern) for pattern in patterns)
+
+
+def _host_pattern_matches(normalized_host: str, pattern: str) -> bool:
+    normalized_pattern = _normalize_host_for_match(pattern)
+    if not normalized_pattern:
+        return False
+    regex = "^" + ".*".join(re.escape(part) for part in normalized_pattern.split("*")) + "$"
+    return re.fullmatch(regex, normalized_host) is not None
+
+
+def _normalize_host_for_match(host: str) -> str:
+    value = host.strip().lower()
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    return value
