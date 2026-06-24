@@ -126,6 +126,23 @@ def test_upload_form_exposes_initial_probe_size_control() -> None:
     assert 'uploadProbeUnitSelect.value = "b";' in script
 
 
+def test_files_panel_tracks_remote_current_directory_for_upload_defaults() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'id="current-directory"' in markup
+    assert 'data-i18n="currentDirectory"' in markup
+    assert "readonly" in markup
+    assert 'const currentDirectoryInput = document.querySelector("#current-directory");' in script
+    assert 'const uploadPathInput = document.querySelector("#upload-path");' in script
+    assert 'currentDirectory: "Current directory"' in script
+    assert 'currentDirectory: "当前目录"' in script
+    assert 'setCurrentWorkingDirectory(message.cwd || "");' in script
+    assert 'message.type === "cwd"' in script
+    assert "function updateUploadPathDefault()" in script
+    assert "uploadPathInput.value = currentWorkingDirectory;" in script
+
+
 def test_frontend_enforces_target_host_security_policies_before_submit() -> None:
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")
 

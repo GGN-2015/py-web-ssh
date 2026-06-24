@@ -21,6 +21,8 @@ const appVersionElement = document.querySelector("#app-version");
 const uploadProbeSizeInput = document.querySelector("#upload-probe-size");
 const uploadProbeUnitSelect = document.querySelector("#upload-probe-unit");
 const terminalGuardElement = document.querySelector("#terminal-guard");
+const currentDirectoryInput = document.querySelector("#current-directory");
+const uploadPathInput = document.querySelector("#upload-path");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
 const MIN_UPLOAD_PROBE_BYTES = 64;
@@ -58,6 +60,7 @@ const translations = {
     reconnect: "Reconnect",
     disconnect: "Disconnect SSH",
     openLogs: "Open full logs",
+    currentDirectory: "Current directory",
     uploadRemotePath: "Upload remote path",
     localFile: "Local file",
     uploadProbeSize: "Initial probe size",
@@ -127,6 +130,7 @@ const translations = {
     reconnect: "重连",
     disconnect: "断开 SSH",
     openLogs: "打开完整日志",
+    currentDirectory: "当前目录",
     uploadRemotePath: "上传到远端路径",
     localFile: "本地文件",
     uploadProbeSize: "初始试探大小",
@@ -217,6 +221,9 @@ let lastAppliedSeq = 0;
 let snapshotTimer = null;
 let activeUpload = null;
 let currentSessionState = "";
+let currentWorkingDirectory = "";
+let uploadPathDefaultSource = "";
+let uploadPathTouched = false;
 
 applyLanguage(currentLanguage);
 initialize();
@@ -237,6 +244,9 @@ languageToggle.addEventListener("click", () => {
 });
 uploadProbeSizeInput.addEventListener("blur", normalizeUploadProbeSize);
 uploadProbeUnitSelect.addEventListener("change", normalizeUploadProbeSize);
+uploadPathInput.addEventListener("input", () => {
+  uploadPathTouched = uploadPathInput.value.trim() !== uploadPathDefaultSource;
+});
 
 term.onData((data) => {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -503,6 +513,7 @@ function connectWebSocket(sessionId) {
     ws.close();
   }
   setTerminalSessionState("");
+  setCurrentWorkingDirectory("");
   term.focus();
   setStatus(t("connectingWebSocket"));
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
@@ -677,12 +688,15 @@ async function handleMessage(message) {
   } else if (message.type === "replay") {
     await replayTerminal(message);
     setSessionState(message.state);
+    setCurrentWorkingDirectory(message.cwd || "");
     if (message.warning) appendLogLine(message.warning);
     for (const entry of message.logs || []) appendLogEntry(entry);
   } else if (message.type === "output") {
     await writeChunk(message);
   } else if (message.type === "status") {
     setSessionState(message.state);
+  } else if (message.type === "cwd") {
+    setCurrentWorkingDirectory(message.cwd || "");
   } else if (message.type === "log") {
     appendLogEntry(message.entry);
   } else if (message.type === "warning") {
@@ -761,6 +775,34 @@ function updateSessionUi(sessionId) {
 function setSessionState(state) {
   setStatus(`${t("sessionState")}: ${state}`);
   setTerminalSessionState(state);
+}
+
+function setCurrentWorkingDirectory(cwd) {
+  const previousDefault = uploadPathDefaultSource;
+  currentWorkingDirectory = cwd || "";
+  currentDirectoryInput.value = currentWorkingDirectory;
+  if (!currentWorkingDirectory) {
+    if (!uploadPathTouched || uploadPathInput.value.trim() === previousDefault) {
+      uploadPathInput.value = "";
+      uploadPathTouched = false;
+    }
+    uploadPathDefaultSource = "";
+    return;
+  }
+  updateUploadPathDefault();
+}
+
+function updateUploadPathDefault() {
+  if (!currentWorkingDirectory) {
+    uploadPathDefaultSource = "";
+    return;
+  }
+  const uploadPath = uploadPathInput.value.trim();
+  if (!uploadPathTouched || !uploadPath || uploadPath === uploadPathDefaultSource) {
+    uploadPathInput.value = currentWorkingDirectory;
+    uploadPathDefaultSource = currentWorkingDirectory;
+    uploadPathTouched = false;
+  }
 }
 
 function setTerminalSessionState(state) {

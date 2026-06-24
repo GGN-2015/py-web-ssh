@@ -1,5 +1,5 @@
 from webssh.models import ConnectRequest
-from webssh.session import BrowserConnection, SessionManager, TerminalSession
+from webssh.session import BrowserConnection, CWD_OSC_PREFIX, CWD_OSC_SUFFIX, SessionManager, TerminalSession
 from webssh.ssh_client import HostKeyInfo
 
 
@@ -102,3 +102,48 @@ def test_host_key_prompt_contains_fingerprints() -> None:
     assert "SHA256:test" in prompt
     assert "MD5:00" in prompt
     assert "Continue connecting? Type Y or N" in prompt
+
+
+def test_hidden_cwd_osc_updates_replay_without_terminal_output() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    output = b"before" + CWD_OSC_PREFIX + b"/srv/app" + CWD_OSC_SUFFIX + b"after"
+
+    assert session._filter_hidden_terminal_output(output) == b"beforeafter"
+
+    payload = session.replay_payload()
+    assert payload["cwd"] == "/srv/app"
+    assert payload["history_next_seq"] == 0
+
+
+def test_hidden_cwd_osc_can_span_recv_chunks() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    first = b"visible" + CWD_OSC_PREFIX[:4]
+    second = CWD_OSC_PREFIX[4:] + b"/home/root" + CWD_OSC_SUFFIX + b"done"
+
+    assert session._filter_hidden_terminal_output(first) == b"visible"
+    assert session._filter_hidden_terminal_output(second) == b"done"
+    assert session.replay_payload()["cwd"] == "/home/root"
+
+
+def test_hidden_terminal_command_echo_is_removed_across_chunks() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session._hidden_command_echoes.append(b"secret command")
+
+    assert session._filter_hidden_terminal_output(b"before secret") == b"before "
+    assert session._filter_hidden_terminal_output(b" command\r\nafter") == b"after"
+
+
+def test_hidden_terminal_command_echo_waits_for_trailing_newline() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session._hidden_command_echoes.append(b"secret command")
+
+    assert session._filter_hidden_terminal_output(b"secret command") == b""
+    assert session._filter_hidden_terminal_output(b"\r\nafter") == b"after"

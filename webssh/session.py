@@ -20,6 +20,23 @@ from .ssh_client import ConnectedClient, HostKeyInfo, connect_ssh
 
 
 SessionState = Literal["connecting", "waiting_host_key", "connected", "closing", "closed", "error"]
+CWD_OSC_PREFIX = b"\x1b]6970;cwd="
+CWD_OSC_SUFFIX = b"\x07"
+CWD_REPORT_COMMAND = (
+    "__py_web_ssh_cwd_report(){ "
+    "printf '\\033]6970;cwd=%s\\007' \"$(command pwd 2>/dev/null || printf '%s' \"$PWD\")\"; "
+    "}; "
+    "if [ -n \"$BASH_VERSION\" ]; then "
+    "PROMPT_COMMAND=\"__py_web_ssh_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"; "
+    "elif [ -n \"$ZSH_VERSION\" ]; then "
+    "autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook precmd __py_web_ssh_cwd_report; "
+    "else "
+    "cd(){ command cd \"$@\" && __py_web_ssh_cwd_report; }; "
+    "pushd(){ command pushd \"$@\" && __py_web_ssh_cwd_report; }; "
+    "popd(){ command popd \"$@\" && __py_web_ssh_cwd_report; }; "
+    "fi; "
+    "__py_web_ssh_cwd_report"
+)
 
 
 @dataclass(eq=False)
@@ -50,6 +67,10 @@ class TerminalSession:
         self._connected: ConnectedClient | None = None
         self._channel: paramiko.Channel | None = None
         self._snapshot: tuple[int, bytes, datetime] | None = None
+        self._current_working_directory = ""
+        self._terminal_filter_buffer = b""
+        self._hidden_echo_filter_buffer = b""
+        self._hidden_command_echoes: list[bytes] = []
         self._last_client_detached_at: float | None = self._clock()
         self._reaped = False
 
@@ -135,6 +156,7 @@ class TerminalSession:
                 "chunks": [self._chunk_payload(chunk) for chunk in chunks],
                 "logs": [entry.model_dump(mode="json") for entry in self._logs[-200:]],
                 "warning": warning,
+                "cwd": self._current_working_directory,
             }
 
     def send_input(self, data: bytes) -> None:
@@ -204,6 +226,7 @@ class TerminalSession:
             with self._channel_lock:
                 self._channel = channel
             self._set_state("connected")
+            self._install_cwd_monitor()
             self.log("info", "Interactive SSH terminal is ready.", None)
 
             while not self._stop.is_set():
@@ -248,10 +271,128 @@ class TerminalSession:
                 self._set_state("closed")
 
     def _append_output(self, data: bytes) -> None:
+        data = self._filter_hidden_terminal_output(data)
+        if not data:
+            return
         with self._lock:
             chunk = self.history.append(data)
             self.updated_at = datetime.now(timezone.utc)
         self._broadcast(self._chunk_payload(chunk) | {"type": "output"})
+
+    def _install_cwd_monitor(self) -> None:
+        try:
+            self._send_hidden_terminal_command(CWD_REPORT_COMMAND)
+        except Exception as exc:
+            self.log("warning", f"Could not start remote working-directory monitor: {exc}", None)
+
+    def _send_hidden_terminal_command(self, command: str) -> None:
+        echo = command.encode("utf-8")
+        payload = echo + b"\n"
+        with self._channel_lock:
+            if self._channel is None or self.state != "connected":
+                return
+            with self._lock:
+                self._hidden_command_echoes.append(echo)
+            self._channel.sendall(payload)
+
+    def _filter_hidden_terminal_output(self, data: bytes) -> bytes:
+        pending = self._terminal_filter_buffer + data
+        self._terminal_filter_buffer = b""
+        visible = bytearray()
+
+        while pending:
+            start = pending.find(CWD_OSC_PREFIX)
+            if start < 0:
+                tail_length = self._cwd_osc_prefix_tail_length(pending)
+                if tail_length:
+                    visible.extend(pending[:-tail_length])
+                    self._terminal_filter_buffer = pending[-tail_length:]
+                else:
+                    visible.extend(pending)
+                break
+
+            visible.extend(pending[:start])
+            payload_start = start + len(CWD_OSC_PREFIX)
+            end = pending.find(CWD_OSC_SUFFIX, payload_start)
+            if end < 0:
+                self._terminal_filter_buffer = pending[start:]
+                break
+
+            cwd = pending[payload_start:end].decode("utf-8", errors="replace").replace("\x00", "")
+            self._set_current_working_directory(cwd.strip("\r\n"))
+            pending = pending[end + len(CWD_OSC_SUFFIX) :]
+
+        return self._remove_hidden_command_echoes(bytes(visible))
+
+    def _cwd_osc_prefix_tail_length(self, data: bytes) -> int:
+        for length in range(min(len(data), len(CWD_OSC_PREFIX) - 1), 0, -1):
+            if CWD_OSC_PREFIX.startswith(data[-length:]):
+                return length
+        return 0
+
+    def _remove_hidden_command_echoes(self, data: bytes) -> bytes:
+        with self._lock:
+            echoes = list(self._hidden_command_echoes)
+        if not echoes:
+            buffered = self._hidden_echo_filter_buffer + data
+            self._hidden_echo_filter_buffer = b""
+            return buffered
+
+        data = self._hidden_echo_filter_buffer + data
+        self._hidden_echo_filter_buffer = b""
+        if not data:
+            return data
+
+        visible = data
+        remaining: list[bytes] = []
+        buffered_tail = b""
+        for echo in echoes:
+            removed = False
+            for pattern in (echo + b"\r\n", echo + b"\n", echo + b"\r"):
+                if pattern in visible:
+                    visible = visible.replace(pattern, b"")
+                    removed = True
+            echo_index = visible.find(echo)
+            if echo_index >= 0:
+                if echo_index + len(echo) == len(visible):
+                    visible = visible[:echo_index]
+                    buffered_tail = echo
+                    remaining.append(echo)
+                    continue
+                visible = visible.replace(echo, b"")
+                removed = True
+            if not removed:
+                remaining.append(echo)
+
+        tail_length = self._hidden_echo_tail_length(visible, remaining)
+        if tail_length:
+            buffered_tail = visible[-tail_length:] + buffered_tail
+            visible = visible[:-tail_length]
+        self._hidden_echo_filter_buffer = buffered_tail
+
+        with self._lock:
+            self._hidden_command_echoes = remaining[-8:]
+        return visible
+
+    def _hidden_echo_tail_length(self, data: bytes, echoes: list[bytes]) -> int:
+        tail_length = 0
+        for echo in echoes:
+            for pattern in (echo + b"\r\n", echo + b"\n", echo + b"\r", echo):
+                for length in range(min(len(data), len(pattern) - 1), tail_length, -1):
+                    if pattern.startswith(data[-length:]):
+                        tail_length = length
+                        break
+        return tail_length
+
+    def _set_current_working_directory(self, cwd: str) -> None:
+        if not cwd:
+            return
+        with self._lock:
+            if cwd == self._current_working_directory:
+                return
+            self._current_working_directory = cwd
+            self.updated_at = datetime.now(timezone.utc)
+        self._broadcast({"type": "cwd", "cwd": cwd})
 
     def _confirm_host_key(self, host_key: HostKeyInfo) -> bool:
         with self._host_key_lock:
