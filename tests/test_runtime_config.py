@@ -158,6 +158,26 @@ def test_websocket_can_toggle_cwd_sync(monkeypatch) -> None:
     assert session.replay_payload()["cwd_sync"] is False
 
 
+def test_websocket_can_request_enter_directory(monkeypatch) -> None:
+    manager = NoStartSessionManager(autostart_reaper=False)
+    monkeypatch.setattr(app_module, "sessions", manager)
+    client = TestClient(app)
+
+    response = client.post("/api/sessions", json={"host": "example.com", "username": "root"})
+    session_id = response.json()["session_id"]
+    session = manager.get(session_id)
+    assert session is not None
+    entered: list[str] = []
+    monkeypatch.setattr(session, "enter_directory", lambda name: entered.append(name))
+
+    with client.websocket_connect(f"/ws/sessions/{session_id}") as websocket:
+        websocket.receive_json()
+        websocket.receive_json()
+        websocket.send_json({"type": "enter_directory", "name": "src"})
+
+    assert entered == ["src"]
+
+
 def test_locked_host_and_username_reject_tampered_request(monkeypatch) -> None:
     configure_runtime_locks(lock_host="allowed.example.com", lock_username="deploy")
     monkeypatch.setattr(app_module, "sessions", NoStartSessionManager(autostart_reaper=False))

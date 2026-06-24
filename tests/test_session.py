@@ -169,6 +169,17 @@ def test_hidden_directory_listing_osc_updates_replay_without_terminal_output() -
     assert replay["directory_listing"][1]["link_target"] == "target"
 
 
+def test_hidden_shell_ready_osc_updates_replay_without_terminal_output() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session.state = "connected"
+    output = b"before" + session._cwd_ready_osc_prefix + b"1" + CWD_OSC_SUFFIX + b"after"
+
+    assert session._filter_hidden_terminal_output(output) == b"beforeafter"
+    assert session.replay_payload()["shell_ready"] is True
+
+
 def test_parse_ls_al_listing_marks_directories_not_downloadable() -> None:
     entries, error = parse_ls_al_listing(
         "total 4\n"
@@ -314,9 +325,51 @@ def test_send_input_does_not_probe_based_on_cd_like_text() -> None:
     assert channel.sent == [b"cd /tmp\r"]
 
 
+def test_enter_directory_requires_shell_prompt_ready() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = False
+    session._current_directory_listing = [{"name": "src", "type": "directory"}]
+
+    try:
+        session.enter_directory("src")
+    except RuntimeError as exc:
+        assert "shell prompt is not ready" in str(exc).lower()
+    else:
+        raise AssertionError("Expected RuntimeError")
+
+
+def test_enter_directory_sends_visible_cd_for_directory_entry() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_directory_listing = [{"name": "it'works", "type": "directory"}]
+
+    session.enter_directory("it'works")
+
+    assert channel.sent == [b"cd 'it'\"'\"'works'\r"]
+    assert session.replay_payload()["shell_ready"] is False
+
+
 def test_posix_cwd_monitor_does_not_override_cd_function() -> None:
     assert "PS1=" in CWD_INSTALL_COMMAND_TEMPLATE
     assert "PS2=" in CWD_INSTALL_COMMAND_TEMPLATE
+    assert "ready;" in CWD_INSTALL_COMMAND_TEMPLATE
     assert "ls -al" in CWD_INSTALL_COMMAND_TEMPLATE
     assert "cd(){" not in CWD_INSTALL_COMMAND_TEMPLATE
     assert "command cd" not in CWD_INSTALL_COMMAND_TEMPLATE

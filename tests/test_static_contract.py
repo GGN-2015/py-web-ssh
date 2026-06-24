@@ -270,7 +270,13 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert "window.setTimeout(() => fitAddon.fit(), 0);" not in script
     assert 'cwdSyncDisabledHint: "Enable CWD Sync to display content."' in script
     assert 'cwdSyncDisabledHint: "启用 CWD Sync 以显示内容。"' in script
+    assert 'enterDirectory: "Enter Dir"' in script
+    assert 'enterDirectory: "进入目录"' in script
     assert 'message.type === "directory_listing"' in script
+    assert 'message.type === "shell_ready"' in script
+    assert "function enterDirectory(entry)" in script
+    assert "function directoryEnterEnabled()" in script
+    assert 'ws.send(JSON.stringify({ type: "enter_directory", name: entry.name || "" }));' in script
     assert "function renderDirectoryPanel()" in script
     assert "function startDirectoryDownload(entry)" in script
     assert "function startDownload(remotePath)" in script

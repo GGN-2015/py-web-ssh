@@ -91,6 +91,8 @@ const translations = {
     fileModified: "Modified",
     fileAction: "Action",
     directoryEntryUnavailable: "Unavailable",
+    enterDirectory: "Enter Dir",
+    shellNotReady: "Shell prompt is not ready.",
     waitingDownload: "Waiting for download",
     cancelDownload: "Cancel download",
     uploadRemotePath: "Upload remote path",
@@ -188,6 +190,8 @@ const translations = {
     fileModified: "修改时间",
     fileAction: "操作",
     directoryEntryUnavailable: "不可用",
+    enterDirectory: "进入目录",
+    shellNotReady: "Shell 提示符尚未就绪。",
     waitingDownload: "等待下载",
     cancelDownload: "取消下载",
     uploadRemotePath: "上传到远端路径",
@@ -298,6 +302,7 @@ let currentSessionState = "";
 let currentWebSocketState = "idle";
 let currentWorkingDirectory = "";
 let cwdSyncEnabled = true;
+let shellReady = false;
 let uploadPathDefaultSource = "";
 let uploadPathTouched = false;
 let currentDirectoryEntries = [];
@@ -523,6 +528,19 @@ function setUploadActionState(state) {
 async function startDirectoryDownload(entry) {
   if (!entry || !entry.downloadable || activeDownload) return;
   await startDownload(entry.path || "");
+}
+
+function enterDirectory(entry) {
+  if (!entry || entry.type !== "directory" || activeDownload) return;
+  if (!shellReady) {
+    appendLogLine(t("shellNotReady"));
+    return;
+  }
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    appendLogLine(t("notConnected"));
+    return;
+  }
+  ws.send(JSON.stringify({ type: "enter_directory", name: entry.name || "" }));
 }
 
 async function startDownload(remotePath) {
@@ -908,6 +926,7 @@ async function handleMessage(message) {
     await replayTerminal(message);
     setSessionState(message.state);
     setCwdSyncEnabled(message.cwd_sync !== false);
+    setShellReady(message.shell_ready === true);
     setCurrentWorkingDirectory(message.cwd || "");
     setDirectoryListing(message.directory_listing || [], message.directory_listing_error || "", false);
     if (message.warning) appendLogLine(message.warning);
@@ -922,6 +941,8 @@ async function handleMessage(message) {
     setCurrentWorkingDirectory(message.cwd || "");
   } else if (message.type === "directory_listing") {
     setDirectoryListing(message.entries || [], message.error || "", message.loading === true);
+  } else if (message.type === "shell_ready") {
+    setShellReady(message.ready === true);
   } else if (message.type === "log") {
     appendLogEntry(message.entry);
   } else if (message.type === "warning") {
@@ -1107,11 +1128,17 @@ function setCwdSyncEnabled(enabled) {
   currentDirectoryInput.classList.toggle("locked", !cwdSyncEnabled);
   directoryPanelCwd.classList.toggle("locked", !cwdSyncEnabled);
   if (!cwdSyncEnabled) {
+    setShellReady(false);
     setCurrentWorkingDirectory("");
     setDirectoryListing([], "", false);
   } else {
     renderDirectoryPanel();
   }
+}
+
+function setShellReady(ready) {
+  shellReady = Boolean(ready && cwdSyncEnabled);
+  renderDirectoryPanel();
 }
 
 function sendCwdSyncState() {
@@ -1179,9 +1206,15 @@ function renderDirectoryRow(entry) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "directory-download-button";
-  button.textContent = t("download");
-  button.disabled = !entry.downloadable || Boolean(activeDownload);
-  button.addEventListener("click", () => startDirectoryDownload(entry));
+  if (entry.type === "directory") {
+    button.textContent = t("enterDirectory");
+    button.disabled = !directoryEnterEnabled() || Boolean(activeDownload);
+    button.addEventListener("click", () => enterDirectory(entry));
+  } else {
+    button.textContent = t("download");
+    button.disabled = !entry.downloadable || Boolean(activeDownload);
+    button.addEventListener("click", () => startDirectoryDownload(entry));
+  }
   actionCell.appendChild(button);
   row.appendChild(actionCell);
   return row;
@@ -1210,13 +1243,19 @@ function setDirectoryPanelBusy(busy) {
 
 function setTerminalSessionState(state) {
   currentSessionState = state || "";
+  if (currentSessionState !== "connected") setShellReady(false);
   updateSessionActionButtons();
   updateTerminalGuard();
 }
 
 function setWebSocketState(state) {
   currentWebSocketState = state;
+  if (currentWebSocketState !== "open") setShellReady(false);
   updateSessionActionButtons();
+}
+
+function directoryEnterEnabled() {
+  return shellReady && currentWebSocketState === "open" && currentSessionState === "connected";
 }
 
 function updateSessionActionButtons() {

@@ -24,13 +24,18 @@ from .ssh_client import ConnectedClient, HostKeyInfo, connect_ssh
 SessionState = Literal["connecting", "waiting_host_key", "connected", "closing", "closed", "error"]
 CWD_OSC_PREFIX = b"\x1b]6970;cwd;"
 CWD_LISTING_OSC_PREFIX = b"\x1b]6970;ls;"
+CWD_READY_OSC_PREFIX = b"\x1b]6970;ready;"
 CWD_OSC_SUFFIX = b"\x07"
 CWD_TOKEN_PLACEHOLDER = "__PY_WEB_SSH_CWD_TOKEN__"
 CWD_REPORT_FUNCTION = "__py_web_ssh_cwd_report"
 CWD_LIST_FUNCTION = "__py_web_ssh_cwd_list"
+CWD_READY_FUNCTION = "__py_web_ssh_cwd_ready"
 HIDDEN_COMMAND_ECHO_OFF = "stty -echo 2>/dev/null"
 HIDDEN_COMMAND_ECHO_ON = "stty echo 2>/dev/null"
 CWD_INSTALL_COMMAND_TEMPLATE = (
+    "__py_web_ssh_cwd_ready(){ "
+    "printf '\\033]6970;ready;" + CWD_TOKEN_PLACEHOLDER + "=1\\007' >&2; "
+    "}; "
     "__py_web_ssh_cwd_list(){ "
     "__py_web_ssh_cwd_ls=$(LC_ALL=C command ls -al 2>&1 | command base64 | command tr -d '\\r\\n') || __py_web_ssh_cwd_ls=; "
     "printf '\\033]6970;ls;" + CWD_TOKEN_PLACEHOLDER + "=%s\\007' \"$__py_web_ssh_cwd_ls\" >&2; "
@@ -42,6 +47,7 @@ CWD_INSTALL_COMMAND_TEMPLATE = (
     "printf '\\033]6970;cwd;" + CWD_TOKEN_PLACEHOLDER + "=%s\\007' \"$__py_web_ssh_cwd_now\" >&2; "
     "__py_web_ssh_cwd_list; "
     "fi; "
+    "__py_web_ssh_cwd_ready; "
     "}; "
     "if [ -n \"${BASH_VERSION:-}\" ]; then "
     "PROMPT_COMMAND=\"__py_web_ssh_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"; "
@@ -87,12 +93,14 @@ class TerminalSession:
         self._cwd_token = uuid.uuid4().hex
         self._cwd_osc_prefix = CWD_OSC_PREFIX + self._cwd_token.encode("ascii") + b"="
         self._cwd_listing_osc_prefix = CWD_LISTING_OSC_PREFIX + self._cwd_token.encode("ascii") + b"="
+        self._cwd_ready_osc_prefix = CWD_READY_OSC_PREFIX + self._cwd_token.encode("ascii") + b"="
         self._current_working_directory = ""
         self._current_directory_listing: list[dict[str, object]] = []
         self._directory_listing_error = ""
         self._cwd_sync_enabled = config.cwd_sync
         self._cwd_sync_waiting_for_change = False
         self._last_observed_working_directory = ""
+        self._shell_prompt_ready = False
         self._terminal_filter_buffer = b""
         self._hidden_echo_filter_buffer = b""
         self._hidden_command_echoes: list[bytes] = []
@@ -185,14 +193,34 @@ class TerminalSession:
                 "directory_listing": self._current_directory_listing if self._cwd_sync_enabled else [],
                 "directory_listing_error": self._directory_listing_error if self._cwd_sync_enabled else "",
                 "cwd_sync": self._cwd_sync_enabled,
+                "shell_ready": self._shell_prompt_ready if self._cwd_sync_enabled else False,
             }
 
     def send_input(self, data: bytes) -> None:
         if self._handle_host_key_confirmation_input(data):
             return
+        self._send_visible_terminal_input(data)
+
+    def enter_directory(self, directory_name: str) -> None:
+        name = _valid_directory_entry_name(directory_name)
+        with self._lock:
+            shell_ready = self._cwd_sync_enabled and self._shell_prompt_ready
+            directory_names = {
+                str(entry.get("name", ""))
+                for entry in self._current_directory_listing
+                if entry.get("type") == "directory"
+            }
+        if not shell_ready:
+            raise RuntimeError("The remote shell prompt is not ready.")
+        if name not in directory_names:
+            raise ValueError("Directory entry is not available.")
+        self._send_visible_terminal_input(f"cd {_posix_shell_quote(name)}\r".encode("utf-8"))
+
+    def _send_visible_terminal_input(self, data: bytes) -> None:
         with self._channel_lock:
             if self._channel is None or self.state != "connected":
                 raise RuntimeError("SSH channel is not connected.")
+            self._set_shell_prompt_ready(False)
             self._channel.sendall(data)
 
     def resize(self, cols: int, rows: int) -> None:
@@ -213,6 +241,7 @@ class TerminalSession:
             self._directory_listing_error = ""
             self._cwd_sync_waiting_for_change = enabled
             self.updated_at = datetime.now(timezone.utc)
+        self._set_shell_prompt_ready(False)
         self._broadcast({"type": "cwd_sync", "enabled": enabled})
         self._broadcast({"type": "cwd", "cwd": ""})
         self._broadcast({"type": "directory_listing", "cwd": "", "entries": [], "error": "", "loading": False})
@@ -371,8 +400,10 @@ class TerminalSession:
             if kind == "cwd":
                 cwd = payload.decode("utf-8", errors="replace").replace("\x00", "")
                 self._set_current_working_directory(cwd.strip("\r\n"))
-            else:
+            elif kind == "listing":
                 self._set_current_directory_listing_from_base64(payload)
+            else:
+                self._set_shell_prompt_ready(True)
             pending = pending[end + len(CWD_OSC_SUFFIX) :]
 
         return self._remove_hidden_command_echoes(bytes(visible))
@@ -381,6 +412,7 @@ class TerminalSession:
         markers = [
             ("cwd", self._cwd_osc_prefix, data.find(self._cwd_osc_prefix)),
             ("listing", self._cwd_listing_osc_prefix, data.find(self._cwd_listing_osc_prefix)),
+            ("ready", self._cwd_ready_osc_prefix, data.find(self._cwd_ready_osc_prefix)),
         ]
         found = [marker for marker in markers if marker[2] >= 0]
         if not found:
@@ -388,7 +420,7 @@ class TerminalSession:
         return min(found, key=lambda marker: marker[2])
 
     def _hidden_osc_prefix_tail_length(self, data: bytes) -> int:
-        prefixes = (self._cwd_osc_prefix, self._cwd_listing_osc_prefix)
+        prefixes = (self._cwd_osc_prefix, self._cwd_listing_osc_prefix, self._cwd_ready_osc_prefix)
         max_length = max(len(prefix) for prefix in prefixes) - 1
         for length in range(min(len(data), max_length), 0, -1):
             if any(prefix.startswith(data[-length:]) for prefix in prefixes):
@@ -554,6 +586,15 @@ class TerminalSession:
             "loading": loading,
         }
 
+    def _set_shell_prompt_ready(self, ready: bool) -> None:
+        ready = bool(ready and self._cwd_sync_enabled and self.state == "connected")
+        with self._lock:
+            if self._shell_prompt_ready == ready:
+                return
+            self._shell_prompt_ready = ready
+            self.updated_at = datetime.now(timezone.utc)
+        self._broadcast({"type": "shell_ready", "ready": ready})
+
     def _confirm_host_key(self, host_key: HostKeyInfo) -> bool:
         with self._host_key_lock:
             self._awaiting_host_key_confirmation = True
@@ -634,6 +675,8 @@ class TerminalSession:
         with self._lock:
             self.state = state
             self.updated_at = datetime.now(timezone.utc)
+        if state != "connected":
+            self._set_shell_prompt_ready(False)
         self._broadcast({"type": "status", "state": state})
 
     def _broadcast(self, message: dict[str, Any]) -> None:
@@ -682,6 +725,17 @@ def parse_ls_al_listing(listing_text: str, cwd: str) -> tuple[list[dict[str, obj
     elif errors:
         error = "Some directory entries could not be parsed."
     return entries, error
+
+
+def _valid_directory_entry_name(name: str) -> str:
+    name = str(name)
+    if not name or "/" in name or "\x00" in name or name in {".", ".."}:
+        raise ValueError("Invalid directory entry name.")
+    return name
+
+
+def _posix_shell_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def _parse_ls_al_line(line: str, cwd: str) -> dict[str, object] | None:
