@@ -185,6 +185,31 @@ def test_closed_non_empty_terminal_is_guarded_from_focus_and_clicks() -> None:
     assert "setTerminalSessionState(\"\");" in script
 
 
+def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    styles = Path("webssh/static/styles.css").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'id="directory-panel"' in markup
+    assert 'id="directory-panel-toggle"' in markup
+    assert 'id="directory-panel-cwd"' in markup
+    assert 'id="directory-table-body"' in markup
+    assert 'id="download-progress"' in markup
+    assert 'id="cancel-download"' in markup
+    assert ".directory-panel.collapsed" in styles
+    assert ".directory-panel.busy" in styles
+    assert 'cwdSyncDisabledHint: "Enable CWD Sync to display content."' in script
+    assert 'cwdSyncDisabledHint: "启用 CWD Sync 以显示内容。"' in script
+    assert 'message.type === "directory_listing"' in script
+    assert "function renderDirectoryPanel()" in script
+    assert "function startDirectoryDownload(entry)" in script
+    assert "function startDownload(remotePath)" in script
+    assert 'fetch(`/api/sessions/${sessionId}/files/downloads`' in script
+    assert 'fetch(`/api/transfers/${downloadState.transferId}/download`' in script
+    assert 'await fetch(`/api/transfers/${activeDownload.transferId}`, { method: "DELETE" });' in script
+    assert "downloadForm.querySelectorAll(\"input, button\")" in script
+
+
 def test_frontend_no_longer_exposes_agent_or_known_hosts_controls() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")

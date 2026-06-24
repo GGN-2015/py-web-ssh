@@ -80,6 +80,11 @@ button:hover {
   border-color: var(--accent);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 button.primary {
   border-color: transparent;
   background: var(--accent);
@@ -427,9 +432,120 @@ progress {
   padding: 8px;
 }
 
+.terminal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 8px;
+  height: calc(100vh - 68px);
+  min-height: 0;
+}
+
 #terminal {
   width: 100%;
-  height: calc(100vh - 68px);
+  height: 100%;
+  min-width: 0;
+}
+
+.directory-panel {
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.directory-panel.collapsed {
+  grid-template-rows: minmax(0, 1fr);
+  width: 42px;
+}
+
+.directory-panel-toggle {
+  width: 100%;
+  min-height: 38px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface-2);
+  font-weight: 700;
+}
+
+.directory-panel.collapsed .directory-panel-toggle {
+  height: 100%;
+  border-bottom: 0;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+.directory-panel-body {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  padding: 10px;
+}
+
+.directory-panel.collapsed .directory-panel-body {
+  display: none;
+}
+
+.directory-panel.busy .directory-table-wrap,
+.directory-panel.busy label,
+.directory-panel.busy #directory-panel-message {
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
+.directory-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.directory-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.directory-table th,
+.directory-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 7px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.directory-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.directory-table td {
+  color: var(--text);
+}
+
+.directory-table .file-name-cell {
+  max-width: 160px;
+  overflow-wrap: anywhere;
+}
+
+.directory-table .file-meta {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.directory-download-button {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .terminal-guard {
@@ -511,7 +627,26 @@ progress {
     min-height: 52vh;
   }
 
+  .terminal-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(220px, 34vh);
+    height: auto;
+  }
+
   #terminal {
     height: 52vh;
+  }
+
+  .directory-panel {
+    min-height: 220px;
+  }
+
+  .directory-panel.collapsed {
+    width: auto;
+    min-height: 38px;
+  }
+
+  .directory-panel.collapsed .directory-panel-toggle {
+    writing-mode: horizontal-tb;
   }
 }

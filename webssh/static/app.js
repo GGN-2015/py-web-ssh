@@ -24,6 +24,16 @@ const terminalGuardElement = document.querySelector("#terminal-guard");
 const currentDirectoryInput = document.querySelector("#current-directory");
 const uploadPathInput = document.querySelector("#upload-path");
 const cwdSyncInput = document.querySelector("#cwd-sync");
+const directoryPanel = document.querySelector("#directory-panel");
+const directoryPanelToggle = document.querySelector("#directory-panel-toggle");
+const directoryPanelCwd = document.querySelector("#directory-panel-cwd");
+const directoryPanelMessage = document.querySelector("#directory-panel-message");
+const directoryTableBody = document.querySelector("#directory-table-body");
+const downloadProgress = document.querySelector("#download-progress");
+const downloadProgressText = document.querySelector("#download-progress-text");
+const downloadProgressBar = document.querySelector("#download-progress-bar");
+const cancelDownloadButton = document.querySelector("#cancel-download");
+const downloadForm = document.querySelector("#download-form");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
 const MIN_UPLOAD_PROBE_BYTES = 64;
@@ -63,6 +73,18 @@ const translations = {
     openLogs: "Open full logs",
     cwdSync: "CWD Sync",
     currentDirectory: "Current directory",
+    directoryPanel: "Directory",
+    directoryLoading: "Loading directory...",
+    directoryEmpty: "No files in this directory.",
+    cwdSyncDisabledHint: "Enable CWD Sync to display content.",
+    fileName: "Name",
+    fileSize: "Size",
+    fileMode: "Mode",
+    fileModified: "Modified",
+    fileAction: "Action",
+    directoryEntryUnavailable: "Unavailable",
+    waitingDownload: "Waiting for download",
+    cancelDownload: "Cancel download",
     uploadRemotePath: "Upload remote path",
     localFile: "Local file",
     uploadProbeSize: "Initial probe size",
@@ -96,6 +118,11 @@ const translations = {
     downloading: "Downloading...",
     downloadFailed: "Download failed",
     downloadComplete: "Download complete",
+    downloadCancelled: "Download cancelled.",
+    cancellingDownload: "Cancelling download...",
+    preparingDownload: "Preparing download...",
+    downloadRequestAborted: "Download request aborted.",
+    networkDownloadError: "Network error during download.",
     connectingWebSocket: "WebSocket connecting...",
     webSocketConnected: "WebSocket connected",
     webSocketClosed: "WebSocket closed; reconnect is available",
@@ -134,6 +161,18 @@ const translations = {
     openLogs: "打开完整日志",
     cwdSync: "CWD Sync",
     currentDirectory: "当前目录",
+    directoryPanel: "目录",
+    directoryLoading: "正在加载目录...",
+    directoryEmpty: "当前目录没有文件。",
+    cwdSyncDisabledHint: "启用 CWD Sync 以显示内容。",
+    fileName: "名称",
+    fileSize: "大小",
+    fileMode: "模式",
+    fileModified: "修改时间",
+    fileAction: "操作",
+    directoryEntryUnavailable: "不可用",
+    waitingDownload: "等待下载",
+    cancelDownload: "取消下载",
     uploadRemotePath: "上传到远端路径",
     localFile: "本地文件",
     uploadProbeSize: "初始试探大小",
@@ -167,6 +206,11 @@ const translations = {
     downloading: "下载中...",
     downloadFailed: "下载失败",
     downloadComplete: "下载完成",
+    downloadCancelled: "下载已取消。",
+    cancellingDownload: "正在取消下载...",
+    preparingDownload: "准备下载...",
+    downloadRequestAborted: "下载请求已中止。",
+    networkDownloadError: "下载过程发生网络错误。",
     connectingWebSocket: "WebSocket 连接中...",
     webSocketConnected: "WebSocket 已连接",
     webSocketClosed: "WebSocket 已关闭；可以重连",
@@ -228,6 +272,10 @@ let currentWorkingDirectory = "";
 let cwdSyncEnabled = true;
 let uploadPathDefaultSource = "";
 let uploadPathTouched = false;
+let currentDirectoryEntries = [];
+let directoryListingLoading = false;
+let directoryListingError = "";
+let activeDownload = null;
 
 applyLanguage(currentLanguage);
 initialize();
@@ -255,6 +303,12 @@ cwdSyncInput.addEventListener("change", () => {
   setCwdSyncEnabled(cwdSyncInput.checked);
   sendCwdSyncState();
 });
+directoryPanelToggle.addEventListener("click", () => {
+  const isCollapsed = directoryPanel.classList.toggle("collapsed");
+  directoryPanelToggle.setAttribute("aria-expanded", String(!isCollapsed));
+  window.setTimeout(() => fitAddon.fit(), 0);
+});
+cancelDownloadButton.addEventListener("click", cancelActiveDownload);
 
 term.onData((data) => {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -441,6 +495,76 @@ function setUploadActionState(state) {
   cancelUploadButton.textContent = completed ? t("uploadComplete") : t("cancelUpload");
 }
 
+async function startDirectoryDownload(entry) {
+  if (!entry || !entry.downloadable || activeDownload) return;
+  await startDownload(entry.path || "");
+}
+
+async function startDownload(remotePath) {
+  if (!activeSessionId || !remotePath || activeDownload) {
+    if (!activeDownload) appendLogLine(t("downloadNeedsInputs"));
+    return;
+  }
+  const downloadState = {
+    transferId: null,
+    pollTimer: null,
+    cancelled: false,
+    controller: new AbortController(),
+    fileSize: 0,
+    startedAt: Date.now(),
+  };
+  activeDownload = downloadState;
+  setDirectoryPanelBusy(true);
+  showDownloadProgress(0, 0, t("preparingDownload"), downloadState);
+  setStatus(t("downloading"));
+  try {
+    const task = await createDownloadTask(activeSessionId, remotePath);
+    downloadState.transferId = task.transfer_id;
+    downloadState.fileSize = task.total_bytes || 0;
+    startDownloadPolling(downloadState);
+    const response = await fetch(`/api/transfers/${downloadState.transferId}/download`, {
+      signal: downloadState.controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const blob = await readDownloadBlob(response, downloadState);
+    saveBlob(blob, filenameFromResponse(response, remotePath));
+    showDownloadProgress(blob.size, downloadState.fileSize || blob.size, t("downloadComplete"), downloadState);
+    appendLogLine(`${t("downloadComplete")}: ${remotePath}`);
+    setStatus(t("downloadComplete"));
+  } catch (error) {
+    appendLogLine(downloadState.cancelled ? t("downloadCancelled") : `${t("downloadFailed")}: ${error}`);
+    setStatus(downloadState.cancelled ? t("downloadCancelled") : t("downloadFailed"));
+  } finally {
+    stopDownloadPolling(downloadState);
+    if (activeDownload === downloadState) activeDownload = null;
+    setDirectoryPanelBusy(false);
+  }
+}
+
+async function createDownloadTask(sessionId, remotePath) {
+  const response = await fetch(`/api/sessions/${sessionId}/files/downloads`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ remote_path: remotePath }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return await response.json();
+}
+
+async function cancelActiveDownload() {
+  if (!activeDownload) return;
+  activeDownload.cancelled = true;
+  showDownloadProgress(0, activeDownload.fileSize, t("cancellingDownload"), activeDownload);
+  if (activeDownload.transferId) {
+    await fetch(`/api/transfers/${activeDownload.transferId}`, { method: "DELETE" });
+  }
+  activeDownload.controller.abort();
+}
+
 document.querySelector("#download-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const remotePath = valueOf("#download-path");
@@ -448,24 +572,7 @@ document.querySelector("#download-form").addEventListener("submit", async (event
     appendLogLine(t("downloadNeedsInputs"));
     return;
   }
-  setStatus(t("downloading"));
-  const response = await fetch(
-    `/api/sessions/${activeSessionId}/files/download?remote_path=${encodeURIComponent(remotePath)}`,
-  );
-  if (!response.ok) {
-    appendLogLine(`${t("downloadFailed")}: ${await response.text()}`);
-    setStatus(t("downloadFailed"));
-    return;
-  }
-  const blob = await response.blob();
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = filenameFromResponse(response, remotePath);
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(link.href);
-  setStatus(t("downloadComplete"));
+  await startDownload(remotePath);
 });
 
 document.querySelectorAll(".tab").forEach((button) => {
@@ -523,6 +630,7 @@ function connectWebSocket(sessionId) {
   }
   setTerminalSessionState("");
   setCurrentWorkingDirectory("");
+  setDirectoryListing([], "", false);
   term.focus();
   setStatus(t("connectingWebSocket"));
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
@@ -699,6 +807,7 @@ async function handleMessage(message) {
     setSessionState(message.state);
     setCwdSyncEnabled(message.cwd_sync !== false);
     setCurrentWorkingDirectory(message.cwd || "");
+    setDirectoryListing(message.directory_listing || [], message.directory_listing_error || "", false);
     if (message.warning) appendLogLine(message.warning);
     for (const entry of message.logs || []) appendLogEntry(entry);
   } else if (message.type === "output") {
@@ -709,6 +818,8 @@ async function handleMessage(message) {
     setCwdSyncEnabled(message.enabled === true);
   } else if (message.type === "cwd") {
     setCurrentWorkingDirectory(message.cwd || "");
+  } else if (message.type === "directory_listing") {
+    setDirectoryListing(message.entries || [], message.error || "", message.loading === true);
   } else if (message.type === "log") {
     appendLogEntry(message.entry);
   } else if (message.type === "warning") {
@@ -796,14 +907,18 @@ function setCurrentWorkingDirectory(cwd) {
   const previousDefault = uploadPathDefaultSource;
   currentWorkingDirectory = cwd || "";
   currentDirectoryInput.value = currentWorkingDirectory;
+  directoryPanelCwd.value = currentWorkingDirectory;
   if (!currentWorkingDirectory) {
     if (!uploadPathTouched || uploadPathInput.value.trim() === previousDefault) {
       uploadPathInput.value = "";
       uploadPathTouched = false;
     }
     uploadPathDefaultSource = "";
+    setDirectoryListing([], "", false);
     return;
   }
+  directoryListingLoading = true;
+  renderDirectoryPanel();
   updateUploadPathDefault();
 }
 
@@ -811,8 +926,12 @@ function setCwdSyncEnabled(enabled) {
   cwdSyncEnabled = Boolean(enabled);
   cwdSyncInput.checked = cwdSyncEnabled;
   currentDirectoryInput.classList.toggle("locked", !cwdSyncEnabled);
+  directoryPanelCwd.classList.toggle("locked", !cwdSyncEnabled);
   if (!cwdSyncEnabled) {
     setCurrentWorkingDirectory("");
+    setDirectoryListing([], "", false);
+  } else {
+    renderDirectoryPanel();
   }
 }
 
@@ -833,6 +952,81 @@ function updateUploadPathDefault() {
     uploadPathDefaultSource = currentWorkingDirectory;
     uploadPathTouched = false;
   }
+}
+
+function setDirectoryListing(entries, error, loading) {
+  currentDirectoryEntries = Array.isArray(entries) ? entries : [];
+  directoryListingError = error || "";
+  directoryListingLoading = Boolean(loading);
+  renderDirectoryPanel();
+}
+
+function renderDirectoryPanel() {
+  directoryPanelCwd.value = cwdSyncEnabled ? currentWorkingDirectory : "";
+  directoryTableBody.textContent = "";
+  if (!cwdSyncEnabled) {
+    directoryPanelMessage.textContent = t("cwdSyncDisabledHint");
+    return;
+  }
+  if (!currentWorkingDirectory) {
+    directoryPanelMessage.textContent = "";
+    return;
+  }
+  if (directoryListingLoading) {
+    directoryPanelMessage.textContent = t("directoryLoading");
+  } else if (directoryListingError) {
+    directoryPanelMessage.textContent = directoryListingError;
+  } else if (!currentDirectoryEntries.length) {
+    directoryPanelMessage.textContent = t("directoryEmpty");
+  } else {
+    directoryPanelMessage.textContent = "";
+  }
+
+  for (const entry of currentDirectoryEntries) {
+    directoryTableBody.appendChild(renderDirectoryRow(entry));
+  }
+}
+
+function renderDirectoryRow(entry) {
+  const row = document.createElement("tr");
+  const displayName = entry.link_target ? `${entry.name} -> ${entry.link_target}` : entry.name;
+  row.append(
+    tableCell(displayName || t("directoryEntryUnavailable"), "file-name-cell"),
+    tableCell(formatDirectoryEntrySize(entry), "file-meta"),
+    tableCell(entry.mode || "", "file-meta"),
+    tableCell(entry.modified || "", "file-meta"),
+  );
+  const actionCell = document.createElement("td");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "directory-download-button";
+  button.textContent = t("download");
+  button.disabled = !entry.downloadable || Boolean(activeDownload);
+  button.addEventListener("click", () => startDirectoryDownload(entry));
+  actionCell.appendChild(button);
+  row.appendChild(actionCell);
+  return row;
+}
+
+function tableCell(text, className = "") {
+  const cell = document.createElement("td");
+  cell.textContent = text;
+  if (className) cell.className = className;
+  return cell;
+}
+
+function formatDirectoryEntrySize(entry) {
+  if (entry.type === "directory") return "-";
+  return formatBytes(Number(entry.size || 0));
+}
+
+function setDirectoryPanelBusy(busy) {
+  directoryPanel.classList.toggle("busy", busy);
+  cancelDownloadButton.disabled = !busy;
+  downloadForm.querySelectorAll("input, button").forEach((element) => {
+    element.disabled = busy;
+  });
+  renderDirectoryPanel();
 }
 
 function setTerminalSessionState(state) {
@@ -994,6 +1188,46 @@ function showUploadProgress(done, total, message, uploadState = activeUpload) {
     `${message} ${formatBytes(done)}${total ? ` / ${formatBytes(total)}` : ""}${eta ? ` · ${t("eta")} ${eta}` : ""}`;
 }
 
+function showDownloadProgress(done, total, message, downloadState = activeDownload) {
+  downloadProgress.classList.remove("hidden");
+  const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  downloadProgressBar.value = percent;
+  const eta = formatTransferEta(done, total, downloadState);
+  downloadProgressText.textContent =
+    `${message} ${formatBytes(done)}${total ? ` / ${formatBytes(total)}` : ""}${eta ? ` · ${t("eta")} ${eta}` : ""}`;
+}
+
+async function readDownloadBlob(response, downloadState) {
+  if (!response.body || !response.body.getReader) {
+    return await response.blob();
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let received = 0;
+  const headerSize = Number.parseInt(response.headers.get("Content-Length") || "", 10);
+  const total = downloadState.fileSize || (Number.isFinite(headerSize) ? headerSize : 0);
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.byteLength;
+    showDownloadProgress(received, total, t("downloading"), downloadState);
+  }
+  return new Blob(chunks, {
+    type: response.headers.get("Content-Type") || "application/octet-stream",
+  });
+}
+
+function saveBlob(blob, filename) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+}
+
 function startUploadPolling(uploadState) {
   stopUploadPolling(uploadState);
   uploadState.pollTimer = window.setInterval(async () => {
@@ -1017,10 +1251,41 @@ function startUploadPolling(uploadState) {
   }, 500);
 }
 
+function startDownloadPolling(downloadState) {
+  stopDownloadPolling(downloadState);
+  downloadState.pollTimer = window.setInterval(async () => {
+    if (!downloadState.transferId) return;
+    try {
+      const response = await fetch(`/api/transfers/${downloadState.transferId}`);
+      if (!response.ok) return;
+      const status = await response.json();
+      const total = status.total_bytes || downloadState.fileSize;
+      showDownloadProgress(
+        status.bytes_transferred || 0,
+        total,
+        status.message || status.state,
+        downloadState,
+      );
+      if (["completed", "cancelled", "failed"].includes(status.state)) {
+        stopDownloadPolling(downloadState);
+      }
+    } catch (_error) {
+      return;
+    }
+  }, 500);
+}
+
 function stopUploadPolling(uploadState) {
   if (uploadState.pollTimer) {
     window.clearInterval(uploadState.pollTimer);
     uploadState.pollTimer = null;
+  }
+}
+
+function stopDownloadPolling(downloadState) {
+  if (downloadState.pollTimer) {
+    window.clearInterval(downloadState.pollTimer);
+    downloadState.pollTimer = null;
   }
 }
 
@@ -1032,8 +1297,12 @@ function formatBytes(value) {
 }
 
 function formatUploadEta(done, total, uploadState) {
-  if (!uploadState || !uploadState.startedAt || !total || done <= 0 || done >= total) return "";
-  const elapsedMs = Date.now() - uploadState.startedAt;
+  return formatTransferEta(done, total, uploadState);
+}
+
+function formatTransferEta(done, total, transferState) {
+  if (!transferState || !transferState.startedAt || !total || done <= 0 || done >= total) return "";
+  const elapsedMs = Date.now() - transferState.startedAt;
   if (elapsedMs <= 0) return "";
   const bytesPerSecond = done / (elapsedMs / 1000);
   if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "";
@@ -1066,6 +1335,8 @@ function applyLanguage(language) {
   languageToggle.textContent = t("languageButton");
   setLanguageCookie(currentLanguage);
   setUploadActionState(cancelUploadButton.dataset.uploadActionState || "cancel");
+  cancelDownloadButton.textContent = t("cancelDownload");
+  renderDirectoryPanel();
   if (statusElement.getAttribute("data-i18n") === "notConnected") {
     statusElement.textContent = t("notConnected");
   }

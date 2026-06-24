@@ -23,9 +23,17 @@ class TransferStatus:
 
 
 class TransferTracker:
-    def __init__(self, total_bytes: int | None, remote_path: str) -> None:
+    def __init__(
+        self,
+        total_bytes: int | None,
+        remote_path: str,
+        kind: str = "upload",
+        session_id: str | None = None,
+    ) -> None:
         now = datetime.now(timezone.utc)
         self.id = str(uuid.uuid4())
+        self.kind = kind
+        self.session_id = session_id
         self.cancel_event = threading.Event()
         self._lock = threading.RLock()
         self._status = TransferStatus(
@@ -42,7 +50,7 @@ class TransferTracker:
     def update_progress(self, bytes_transferred: int) -> None:
         with self._lock:
             self._status.bytes_transferred = bytes_transferred
-            self._status.message = "Uploading."
+            self._status.message = "Downloading." if self.kind == "download" else "Uploading."
             self._status.updated_at = datetime.now(timezone.utc)
 
     def complete(self, bytes_transferred: int, message: str, remote_path: str | None = None) -> None:
@@ -64,7 +72,8 @@ class TransferTracker:
         self.cancel_event.set()
         with self._lock:
             self._status.state = "cancelled"
-            self._status.message = "Upload cancellation requested."
+            action = "Download" if self.kind == "download" else "Upload"
+            self._status.message = f"{action} cancellation requested."
             self._status.updated_at = datetime.now(timezone.utc)
 
     def cancelled(self, message: str) -> None:
@@ -84,8 +93,34 @@ class TransferManager:
         self._lock = threading.RLock()
         self._transfers: dict[str, TransferTracker] = {}
 
-    def create_upload(self, total_bytes: int | None, remote_path: str) -> TransferTracker:
-        tracker = TransferTracker(total_bytes=total_bytes, remote_path=remote_path)
+    def create_upload(
+        self,
+        total_bytes: int | None,
+        remote_path: str,
+        session_id: str | None = None,
+    ) -> TransferTracker:
+        tracker = TransferTracker(
+            total_bytes=total_bytes,
+            remote_path=remote_path,
+            kind="upload",
+            session_id=session_id,
+        )
+        with self._lock:
+            self._transfers[tracker.id] = tracker
+        return tracker
+
+    def create_download(
+        self,
+        total_bytes: int | None,
+        remote_path: str,
+        session_id: str | None = None,
+    ) -> TransferTracker:
+        tracker = TransferTracker(
+            total_bytes=total_bytes,
+            remote_path=remote_path,
+            kind="download",
+            session_id=session_id,
+        )
         with self._lock:
             self._transfers[tracker.id] = tracker
         return tracker

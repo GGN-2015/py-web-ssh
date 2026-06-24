@@ -1,11 +1,15 @@
+import base64
+
 from webssh.models import ConnectRequest
 from webssh.session import (
     BrowserConnection,
     CWD_INSTALL_COMMAND_TEMPLATE,
     CWD_OSC_PREFIX,
+    CWD_LISTING_OSC_PREFIX,
     CWD_OSC_SUFFIX,
     SessionManager,
     TerminalSession,
+    parse_ls_al_listing,
 )
 from webssh.ssh_client import HostKeyInfo
 
@@ -122,6 +126,7 @@ def test_hidden_cwd_osc_updates_replay_without_terminal_output() -> None:
     payload = session.replay_payload()
     assert payload["cwd"] == "/srv/app"
     assert payload["history_next_seq"] == 0
+    assert payload["directory_listing"] == []
 
 
 def test_hidden_cwd_osc_can_span_recv_chunks() -> None:
@@ -134,6 +139,47 @@ def test_hidden_cwd_osc_can_span_recv_chunks() -> None:
     assert session._filter_hidden_terminal_output(first) == b"visible"
     assert session._filter_hidden_terminal_output(second) == b"done"
     assert session.replay_payload()["cwd"] == "/home/root"
+
+
+def test_hidden_directory_listing_osc_updates_replay_without_terminal_output() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session._filter_hidden_terminal_output(session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX)
+    listing = (
+        "total 8\n"
+        "drwxr-xr-x 2 root root 4096 Jun 24 12:00 .\n"
+        "drwxr-xr-x 3 root root 4096 Jun 24 11:59 ..\n"
+        "-rw-r--r-- 1 root root 12 Jun 24 12:01 file name.txt\n"
+        "lrwxrwxrwx 1 root root 6 Jun 24 12:02 link -> target\n"
+    )
+    payload = base64.b64encode(listing.encode("utf-8"))
+    output = b"before" + session._cwd_listing_osc_prefix + payload + CWD_OSC_SUFFIX + b"after"
+
+    assert session._filter_hidden_terminal_output(output) == b"beforeafter"
+
+    replay = session.replay_payload()
+    assert replay["directory_listing_error"] == ""
+    assert replay["directory_listing"][0]["name"] == "file name.txt"
+    assert replay["directory_listing"][0]["path"] == "/srv/app/file name.txt"
+    assert replay["directory_listing"][0]["downloadable"] is True
+    assert replay["directory_listing"][1]["name"] == "link"
+    assert replay["directory_listing"][1]["link_target"] == "target"
+
+
+def test_parse_ls_al_listing_marks_directories_not_downloadable() -> None:
+    entries, error = parse_ls_al_listing(
+        "total 4\n"
+        "drwxr-xr-x 2 root root 4096 Jun 24 12:00 folder\n"
+        "-rw-r--r-- 1 root root 42 Jun 24 12:01 file.txt\n",
+        "/srv/app",
+    )
+
+    assert error == ""
+    assert entries[0]["type"] == "directory"
+    assert entries[0]["downloadable"] is False
+    assert entries[1]["type"] == "file"
+    assert entries[1]["size"] == 42
 
 
 def test_hidden_terminal_command_echo_is_removed_across_chunks() -> None:
@@ -164,6 +210,7 @@ def test_cwd_sync_off_filters_but_does_not_store_hidden_cwd() -> None:
 
     assert session._filter_hidden_terminal_output(output) == b"visible"
     assert session.replay_payload()["cwd"] == ""
+    assert session.replay_payload()["directory_listing"] == []
     assert session.replay_payload()["cwd_sync"] is False
 
 
@@ -173,6 +220,7 @@ def test_reenabled_cwd_sync_waits_until_directory_changes() -> None:
     )
     session._filter_hidden_terminal_output(session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX)
     session.set_cwd_sync_enabled(False)
+    assert session.replay_payload()["directory_listing"] == []
     session._filter_hidden_terminal_output(session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX)
 
     session.set_cwd_sync_enabled(True)
@@ -191,6 +239,16 @@ def test_non_session_cwd_osc_is_not_treated_as_hidden_sync() -> None:
 
     assert session._filter_hidden_terminal_output(other) == other
     assert session.replay_payload()["cwd"] == ""
+
+
+def test_non_session_directory_listing_osc_is_not_treated_as_hidden_sync() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    other = CWD_LISTING_OSC_PREFIX + b"other-token=Zm9v" + CWD_OSC_SUFFIX
+
+    assert session._filter_hidden_terminal_output(other) == other
+    assert session.replay_payload()["directory_listing"] == []
 
 
 def test_send_input_does_not_probe_based_on_cd_like_text() -> None:
@@ -216,5 +274,6 @@ def test_send_input_does_not_probe_based_on_cd_like_text() -> None:
 def test_posix_cwd_monitor_does_not_override_cd_function() -> None:
     assert "PS1=" in CWD_INSTALL_COMMAND_TEMPLATE
     assert "PS2=" in CWD_INSTALL_COMMAND_TEMPLATE
+    assert "ls -al" in CWD_INSTALL_COMMAND_TEMPLATE
     assert "cd(){" not in CWD_INSTALL_COMMAND_TEMPLATE
     assert "command cd" not in CWD_INSTALL_COMMAND_TEMPLATE

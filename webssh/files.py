@@ -323,6 +323,8 @@ def download_file_via_ssh(
     config: ConnectRequest,
     remote_path: str,
     expected_host_key: HostKeyInfo,
+    cancel_event: threading.Event | None = None,
+    progress: ProgressCallback | None = None,
 ) -> tuple[str, Iterator[bytes]]:
     connected = connect_ssh(
         config,
@@ -336,8 +338,11 @@ def download_file_via_ssh(
 
     def iterator() -> Iterator[bytes]:
         buffered = b""
+        transferred = 0
         try:
             while True:
+                if cancel_event and cancel_event.is_set():
+                    raise FileTransferCancelled("Download cancelled by client.")
                 chunk = stdout.channel.recv(64 * 1024)
                 if not chunk:
                     break
@@ -346,9 +351,17 @@ def download_file_via_ssh(
                 ready = buffered[:-keep] if keep else buffered
                 buffered = buffered[-keep:] if keep else b""
                 if ready:
-                    yield base64.b64decode(ready)
+                    decoded = base64.b64decode(ready)
+                    transferred += len(decoded)
+                    if progress:
+                        progress(transferred)
+                    yield decoded
             if buffered:
-                yield base64.b64decode(buffered)
+                decoded = base64.b64decode(buffered)
+                transferred += len(decoded)
+                if progress:
+                    progress(transferred)
+                yield decoded
             exit_code = stdout.channel.recv_exit_status()
             error_text = stderr.read().decode("utf-8", errors="replace")
             if exit_code != 0:
@@ -363,6 +376,27 @@ def download_file_via_ssh(
             client.close()
 
     return "shell", iterator()
+
+
+def remote_file_size_via_ssh(
+    config: ConnectRequest,
+    remote_path: str,
+    expected_host_key: HostKeyInfo,
+) -> int | None:
+    connected = _connect_transfer_client(config, expected_host_key)
+    client = connected.client
+    try:
+        output, _ = _run_remote_command(
+            client,
+            f"if [ -f {shlex.quote(remote_path)} ]; then wc -c < {shlex.quote(remote_path)}; else exit 2; fi",
+        )
+    finally:
+        client.close()
+    text = output.decode("utf-8", errors="replace").strip()
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 def _write_base64_temp_file(

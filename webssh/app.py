@@ -25,6 +25,7 @@ from .files import (
     REQUESTED_UPLOAD_COMMAND_BYTES,
     download_file_via_ssh,
     filename_for_download,
+    remote_file_size_via_ssh,
     upload_file_via_ssh,
 )
 from .models import ConnectRequest, CreateSessionResponse, FileTransferResponse
@@ -184,7 +185,7 @@ def upload(
         raise HTTPException(status_code=404, detail="Transfer not found.")
     requested_command_size = _normalize_upload_command_size(upload_command_size_bytes)
     if tracker is None:
-        tracker = transfers.create_upload(total_bytes or _content_length(file), remote_path)
+        tracker = transfers.create_upload(total_bytes or _content_length(file), remote_path, session_id)
     try:
         method, transferred, final_remote_path = upload_file_via_ssh(
             session.config,
@@ -235,7 +236,7 @@ async def create_upload_task(session_id: str, request: Request) -> JSONResponse:
     total_bytes = payload.get("total_bytes")
     if total_bytes is not None:
         total_bytes = int(total_bytes)
-    tracker = transfers.create_upload(total_bytes, remote_path)
+    tracker = transfers.create_upload(total_bytes, remote_path, session_id)
     return JSONResponse(
         {
             "transfer_id": tracker.id,
@@ -243,6 +244,92 @@ async def create_upload_task(session_id: str, request: Request) -> JSONResponse:
             "remote_path": remote_path,
             "total_bytes": total_bytes,
         }
+    )
+
+
+@app.post("/api/sessions/{session_id}/files/downloads")
+async def create_download_task(session_id: str, request: Request) -> JSONResponse:
+    session = _require_session(session_id)
+    expected_host_key = session.confirmed_host_key
+    if expected_host_key is None:
+        raise HTTPException(
+            status_code=409,
+            detail="SSH server host key has not been confirmed in the terminal yet.",
+        )
+    payload = await request.json()
+    remote_path = str(payload.get("remote_path", "")).strip()
+    if not remote_path:
+        raise HTTPException(status_code=422, detail="remote_path is required.")
+    total_bytes = None
+    try:
+        total_bytes = remote_file_size_via_ssh(session.config, remote_path, expected_host_key)
+    except Exception as exc:
+        session.log("warning", f"Could not determine remote download size: {exc}", None)
+    tracker = transfers.create_download(total_bytes, remote_path, session_id)
+    return JSONResponse(
+        {
+            "transfer_id": tracker.id,
+            "state": tracker.status().state,
+            "remote_path": remote_path,
+            "total_bytes": total_bytes,
+        }
+    )
+
+
+@app.get("/api/transfers/{transfer_id}/download")
+def download_transfer(transfer_id: str) -> StreamingResponse:
+    tracker = transfers.get(transfer_id)
+    if tracker is None:
+        raise HTTPException(status_code=404, detail="Transfer not found.")
+    status = tracker.status()
+    session = sessions.get(tracker.session_id or "")
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found for transfer.")
+    expected_host_key = session.confirmed_host_key
+    if expected_host_key is None:
+        raise HTTPException(
+            status_code=409,
+            detail="SSH server host key has not been confirmed in the terminal yet.",
+        )
+    try:
+        method, stream = download_file_via_ssh(
+            session.config,
+            status.remote_path,
+            expected_host_key,
+            cancel_event=tracker.cancel_event,
+            progress=tracker.update_progress,
+        )
+    except Exception as exc:
+        tracker.fail(str(exc))
+        session.log("error", f"File download failed: {exc}", None)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    def tracked_stream():
+        transferred = 0
+        try:
+            for chunk in stream:
+                transferred += len(chunk)
+                yield chunk
+            message = f"Downloaded {transferred} bytes from {status.remote_path} using {method}."
+            tracker.complete(transferred, message)
+            session.log("info", message, None)
+        except FileTransferCancelled as exc:
+            message = f"File download cancelled: {exc}"
+            tracker.cancelled(message)
+            session.log("warning", message, None)
+        except Exception as exc:
+            tracker.fail(str(exc))
+            session.log("error", f"File download failed: {exc}", None)
+            raise
+
+    return StreamingResponse(
+        tracked_stream(),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename_for_download(status.remote_path)}"',
+            "X-Transfer-Method": method,
+            "X-Transfer-Id": tracker.id,
+        },
     )
 
 

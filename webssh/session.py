@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
+import posixpath
 import threading
 import time
 import traceback
@@ -21,15 +23,22 @@ from .ssh_client import ConnectedClient, HostKeyInfo, connect_ssh
 
 SessionState = Literal["connecting", "waiting_host_key", "connected", "closing", "closed", "error"]
 CWD_OSC_PREFIX = b"\x1b]6970;cwd;"
+CWD_LISTING_OSC_PREFIX = b"\x1b]6970;ls;"
 CWD_OSC_SUFFIX = b"\x07"
 CWD_TOKEN_PLACEHOLDER = "__PY_WEB_SSH_CWD_TOKEN__"
 CWD_REPORT_FUNCTION = "__py_web_ssh_cwd_report"
+CWD_LIST_FUNCTION = "__py_web_ssh_cwd_list"
 CWD_INSTALL_COMMAND_TEMPLATE = (
+    "__py_web_ssh_cwd_list(){ "
+    "__py_web_ssh_cwd_ls=$(LC_ALL=C command ls -al 2>&1 | command base64 | command tr -d '\\r\\n') || __py_web_ssh_cwd_ls=; "
+    "printf '\\033]6970;ls;" + CWD_TOKEN_PLACEHOLDER + "=%s\\007' \"$__py_web_ssh_cwd_ls\" >&2; "
+    "}; "
     "__py_web_ssh_cwd_report(){ "
     "__py_web_ssh_cwd_now=$(command pwd 2>/dev/null || printf '%s' \"$PWD\") || return; "
     "if [ \"${__py_web_ssh_cwd_now}\" != \"${__py_web_ssh_cwd_last-}\" ]; then "
     "__py_web_ssh_cwd_last=$__py_web_ssh_cwd_now; "
     "printf '\\033]6970;cwd;" + CWD_TOKEN_PLACEHOLDER + "=%s\\007' \"$__py_web_ssh_cwd_now\" >&2; "
+    "__py_web_ssh_cwd_list; "
     "fi; "
     "}; "
     "if [ -n \"${BASH_VERSION:-}\" ]; then "
@@ -75,7 +84,10 @@ class TerminalSession:
         self._snapshot: tuple[int, bytes, datetime] | None = None
         self._cwd_token = uuid.uuid4().hex
         self._cwd_osc_prefix = CWD_OSC_PREFIX + self._cwd_token.encode("ascii") + b"="
+        self._cwd_listing_osc_prefix = CWD_LISTING_OSC_PREFIX + self._cwd_token.encode("ascii") + b"="
         self._current_working_directory = ""
+        self._current_directory_listing: list[dict[str, object]] = []
+        self._directory_listing_error = ""
         self._cwd_sync_enabled = config.cwd_sync
         self._cwd_sync_waiting_for_change = False
         self._last_observed_working_directory = ""
@@ -168,6 +180,8 @@ class TerminalSession:
                 "logs": [entry.model_dump(mode="json") for entry in self._logs[-200:]],
                 "warning": warning,
                 "cwd": self._current_working_directory if self._cwd_sync_enabled else "",
+                "directory_listing": self._current_directory_listing if self._cwd_sync_enabled else [],
+                "directory_listing_error": self._directory_listing_error if self._cwd_sync_enabled else "",
                 "cwd_sync": self._cwd_sync_enabled,
             }
 
@@ -193,10 +207,13 @@ class TerminalSession:
         with self._lock:
             self._cwd_sync_enabled = enabled
             self._current_working_directory = ""
+            self._current_directory_listing = []
+            self._directory_listing_error = ""
             self._cwd_sync_waiting_for_change = enabled
             self.updated_at = datetime.now(timezone.utc)
         self._broadcast({"type": "cwd_sync", "enabled": enabled})
         self._broadcast({"type": "cwd", "cwd": ""})
+        self._broadcast({"type": "directory_listing", "cwd": "", "entries": [], "error": "", "loading": False})
 
     def close(self, reason: str = "Client requested disconnect.") -> None:
         self.log("info", reason, None)
@@ -326,9 +343,9 @@ class TerminalSession:
         visible = bytearray()
 
         while pending:
-            start = pending.find(self._cwd_osc_prefix)
-            if start < 0:
-                tail_length = self._cwd_osc_prefix_tail_length(pending)
+            marker = self._next_hidden_osc_marker(pending)
+            if marker is None:
+                tail_length = self._hidden_osc_prefix_tail_length(pending)
                 if tail_length:
                     visible.extend(pending[:-tail_length])
                     self._terminal_filter_buffer = pending[-tail_length:]
@@ -336,22 +353,39 @@ class TerminalSession:
                     visible.extend(pending)
                 break
 
+            kind, prefix, start = marker
             visible.extend(pending[:start])
-            payload_start = start + len(self._cwd_osc_prefix)
+            payload_start = start + len(prefix)
             end = pending.find(CWD_OSC_SUFFIX, payload_start)
             if end < 0:
                 self._terminal_filter_buffer = pending[start:]
                 break
 
-            cwd = pending[payload_start:end].decode("utf-8", errors="replace").replace("\x00", "")
-            self._set_current_working_directory(cwd.strip("\r\n"))
+            payload = pending[payload_start:end]
+            if kind == "cwd":
+                cwd = payload.decode("utf-8", errors="replace").replace("\x00", "")
+                self._set_current_working_directory(cwd.strip("\r\n"))
+            else:
+                self._set_current_directory_listing_from_base64(payload)
             pending = pending[end + len(CWD_OSC_SUFFIX) :]
 
         return self._remove_hidden_command_echoes(bytes(visible))
 
-    def _cwd_osc_prefix_tail_length(self, data: bytes) -> int:
-        for length in range(min(len(data), len(self._cwd_osc_prefix) - 1), 0, -1):
-            if self._cwd_osc_prefix.startswith(data[-length:]):
+    def _next_hidden_osc_marker(self, data: bytes) -> tuple[str, bytes, int] | None:
+        markers = [
+            ("cwd", self._cwd_osc_prefix, data.find(self._cwd_osc_prefix)),
+            ("listing", self._cwd_listing_osc_prefix, data.find(self._cwd_listing_osc_prefix)),
+        ]
+        found = [marker for marker in markers if marker[2] >= 0]
+        if not found:
+            return None
+        return min(found, key=lambda marker: marker[2])
+
+    def _hidden_osc_prefix_tail_length(self, data: bytes) -> int:
+        prefixes = (self._cwd_osc_prefix, self._cwd_listing_osc_prefix)
+        max_length = max(len(prefix) for prefix in prefixes) - 1
+        for length in range(min(len(data), max_length), 0, -1):
+            if any(prefix.startswith(data[-length:]) for prefix in prefixes):
                 return length
         return 0
 
@@ -412,6 +446,7 @@ class TerminalSession:
     def _set_current_working_directory(self, cwd: str) -> None:
         if not cwd:
             return
+        listing_payload: dict[str, object] | None = None
         with self._lock:
             changed = cwd != self._last_observed_working_directory
             self._last_observed_working_directory = cwd
@@ -423,8 +458,40 @@ class TerminalSession:
             if cwd == self._current_working_directory:
                 return
             self._current_working_directory = cwd
+            self._current_directory_listing = []
+            self._directory_listing_error = ""
             self.updated_at = datetime.now(timezone.utc)
+            listing_payload = self._directory_listing_payload(loading=True)
         self._broadcast({"type": "cwd", "cwd": cwd})
+        if listing_payload is not None:
+            self._broadcast(listing_payload)
+
+    def _set_current_directory_listing_from_base64(self, payload: bytes) -> None:
+        try:
+            decoded = base64.b64decode(b"".join(payload.split()), validate=True)
+            listing_text = decoded.decode("utf-8", errors="replace")
+            entries, error = parse_ls_al_listing(listing_text, self._current_working_directory)
+        except (binascii.Error, ValueError) as exc:
+            entries = []
+            error = f"Could not parse remote directory listing: {exc}"
+
+        with self._lock:
+            if not self._cwd_sync_enabled:
+                return
+            self._current_directory_listing = entries
+            self._directory_listing_error = error
+            self.updated_at = datetime.now(timezone.utc)
+            payload_message = self._directory_listing_payload()
+        self._broadcast(payload_message)
+
+    def _directory_listing_payload(self, loading: bool = False) -> dict[str, object]:
+        return {
+            "type": "directory_listing",
+            "cwd": self._current_working_directory,
+            "entries": self._current_directory_listing,
+            "error": self._directory_listing_error,
+            "loading": loading,
+        }
 
     def _confirm_host_key(self, host_key: HostKeyInfo) -> bool:
         with self._host_key_lock:
@@ -531,6 +598,73 @@ class TerminalSession:
                     "message": "Browser message queue overflowed; an output frame was dropped.",
                 }
             )
+
+
+def parse_ls_al_listing(listing_text: str, cwd: str) -> tuple[list[dict[str, object]], str]:
+    entries: list[dict[str, object]] = []
+    errors: list[str] = []
+    for raw_line in listing_text.splitlines():
+        line = raw_line.strip("\r\n")
+        if not line or line.startswith("total "):
+            continue
+        parts = line.split(maxsplit=8)
+        if len(parts) >= 9 and parts[8] in {".", ".."}:
+            continue
+        entry = _parse_ls_al_line(line, cwd)
+        if entry is None:
+            errors.append(line)
+        else:
+            entries.append(entry)
+    error = ""
+    if errors and not entries:
+        error = "\n".join(errors)
+    elif errors:
+        error = "Some directory entries could not be parsed."
+    return entries, error
+
+
+def _parse_ls_al_line(line: str, cwd: str) -> dict[str, object] | None:
+    parts = line.split(maxsplit=8)
+    if len(parts) < 9:
+        return None
+    mode, links, owner, group, size, month, day, time_or_year, name_text = parts
+    if name_text in {".", ".."}:
+        return None
+    name = name_text
+    link_target = ""
+    if mode.startswith("l") and " -> " in name_text:
+        name, link_target = name_text.split(" -> ", 1)
+    try:
+        link_count = int(links)
+    except ValueError:
+        link_count = 0
+    try:
+        byte_size = int(size)
+    except ValueError:
+        byte_size = 0
+    return {
+        "name": name,
+        "path": posixpath.join(cwd or ".", name),
+        "mode": mode,
+        "type": _file_type_from_mode(mode),
+        "links": link_count,
+        "owner": owner,
+        "group": group,
+        "size": byte_size,
+        "modified": " ".join([month, day, time_or_year]),
+        "link_target": link_target,
+        "downloadable": not mode.startswith("d"),
+    }
+
+
+def _file_type_from_mode(mode: str) -> str:
+    if mode.startswith("d"):
+        return "directory"
+    if mode.startswith("l"):
+        return "symlink"
+    if mode.startswith("-"):
+        return "file"
+    return "other"
 
 
 class SessionManager:

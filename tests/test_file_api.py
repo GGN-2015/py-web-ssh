@@ -178,6 +178,77 @@ def test_create_upload_task_requires_confirmed_host_key(monkeypatch) -> None:
     assert "host key has not been confirmed" in response.json()["detail"]
 
 
+def test_download_task_streams_with_progress_and_session_config(monkeypatch) -> None:
+    client = TestClient(app)
+    manager = SessionManager(autostart_reaper=False)
+    session = TerminalSession(ConnectRequest(host="example.com", username="root"))
+    manager._sessions[session.id] = session
+    session._confirmed_host_key = fake_host_key()
+    monkeypatch.setattr(app_module, "sessions", manager)
+    captured: dict[str, object] = {}
+
+    def fake_size(config, remote_path, expected_host_key):
+        captured["size_config"] = config
+        captured["size_remote_path"] = remote_path
+        captured["size_host_key"] = expected_host_key
+        return 10
+
+    def fake_download(config, remote_path, expected_host_key, cancel_event=None, progress=None):
+        captured["download_config"] = config
+        captured["download_remote_path"] = remote_path
+        captured["download_host_key"] = expected_host_key
+        captured["cancel_event"] = cancel_event
+
+        def stream():
+            if progress:
+                progress(5)
+            yield b"hello"
+            if progress:
+                progress(10)
+            yield b"world"
+
+        return "shell", stream()
+
+    monkeypatch.setattr(app_module, "remote_file_size_via_ssh", fake_size)
+    monkeypatch.setattr(app_module, "download_file_via_ssh", fake_download)
+
+    task = client.post(
+        f"/api/sessions/{session.id}/files/downloads",
+        json={"remote_path": "/tmp/example.txt"},
+    )
+    assert task.status_code == 200
+    transfer_id = task.json()["transfer_id"]
+    assert task.json()["total_bytes"] == 10
+
+    response = client.get(f"/api/transfers/{transfer_id}/download")
+    status = client.get(f"/api/transfers/{transfer_id}")
+
+    assert response.status_code == 200
+    assert response.content == b"helloworld"
+    assert response.headers["x-transfer-id"] == transfer_id
+    assert captured["size_config"] is session.config
+    assert captured["download_config"] is session.config
+    assert captured["download_host_key"] is session._confirmed_host_key
+    assert status.json()["state"] == "completed"
+    assert status.json()["bytes_transferred"] == 10
+
+
+def test_create_download_task_requires_confirmed_host_key(monkeypatch) -> None:
+    client = TestClient(app)
+    manager = SessionManager(autostart_reaper=False)
+    session = TerminalSession(ConnectRequest(host="example.com", username="root"))
+    manager._sessions[session.id] = session
+    monkeypatch.setattr(app_module, "sessions", manager)
+
+    response = client.post(
+        f"/api/sessions/{session.id}/files/downloads",
+        json={"remote_path": "/tmp/example.txt"},
+    )
+
+    assert response.status_code == 409
+    assert "host key has not been confirmed" in response.json()["detail"]
+
+
 def test_cancel_transfer_endpoint_marks_transfer_cancelled() -> None:
     client = TestClient(app)
     response = client.post(

@@ -190,7 +190,42 @@
           </div>
         </div>
         <div id="terminal-pane" class="pane active">
-          <div id="terminal"></div>
+          <div class="terminal-layout">
+            <div id="terminal"></div>
+            <aside id="directory-panel" class="directory-panel" aria-label="Current directory files">
+              <button id="directory-panel-toggle" class="directory-panel-toggle" type="button" aria-expanded="true" aria-controls="directory-panel-body">
+                <span data-i18n="directoryPanel">Directory</span>
+              </button>
+              <div id="directory-panel-body" class="directory-panel-body">
+                <div id="download-progress" class="transfer-progress hidden">
+                  <div class="progress-row">
+                    <span id="download-progress-text" data-i18n="waitingDownload">Waiting for download</span>
+                    <button id="cancel-download" type="button" data-i18n="cancelDownload">Cancel download</button>
+                  </div>
+                  <progress id="download-progress-bar" max="100" value="0"></progress>
+                </div>
+                <label>
+                  <span data-i18n="currentDirectory">Current directory</span>
+                  <input id="directory-panel-cwd" readonly />
+                </label>
+                <p id="directory-panel-message" class="panel-help"></p>
+                <div class="directory-table-wrap">
+                  <table id="directory-table" class="directory-table">
+                    <thead>
+                      <tr>
+                        <th data-i18n="fileName">Name</th>
+                        <th data-i18n="fileSize">Size</th>
+                        <th data-i18n="fileMode">Mode</th>
+                        <th data-i18n="fileModified">Modified</th>
+                        <th data-i18n="fileAction">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="directory-table-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </aside>
+          </div>
           <div id="terminal-guard" class="terminal-guard" hidden aria-hidden="true"></div>
         </div>
         <div id="logs-pane" class="pane">
