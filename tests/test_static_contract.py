@@ -119,6 +119,11 @@ def test_upload_form_exposes_initial_probe_size_control() -> None:
     assert '<option value="b">B</option>' in markup
     assert 'form.append("upload_command_size_bytes", String(uploadProbeSizeBytes()));' in script
     assert "function uploadProbeSizeBytes()" in script
+    assert "const MIN_UPLOAD_PROBE_BYTES = 64;" in script
+    assert "uploadProbeSizeInput.addEventListener(\"blur\", normalizeUploadProbeSize);" in script
+    assert "uploadProbeUnitSelect.addEventListener(\"change\", normalizeUploadProbeSize);" in script
+    assert 'uploadProbeSizeInput.value = String(MIN_UPLOAD_PROBE_BYTES);' in script
+    assert 'uploadProbeUnitSelect.value = "b";' in script
 
 
 def test_frontend_no_longer_exposes_agent_or_known_hosts_controls() -> None:

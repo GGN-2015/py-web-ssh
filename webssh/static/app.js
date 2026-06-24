@@ -18,8 +18,16 @@ const algorithmGroupsElement = document.querySelector("#algorithm-groups");
 const appTitleElement = document.querySelector("#app-title");
 const appSubtitleElement = document.querySelector("#app-subtitle");
 const appVersionElement = document.querySelector("#app-version");
+const uploadProbeSizeInput = document.querySelector("#upload-probe-size");
+const uploadProbeUnitSelect = document.querySelector("#upload-probe-unit");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
+const MIN_UPLOAD_PROBE_BYTES = 64;
+const UPLOAD_PROBE_UNIT_BYTES = {
+  mb: 1024 * 1024,
+  kb: 1024,
+  b: 1,
+};
 const translations = {
   en: {
     pinRequired: "PIN required",
@@ -221,6 +229,8 @@ window.addEventListener("resize", () => {
 languageToggle.addEventListener("click", () => {
   applyLanguage(currentLanguage === "en" ? "zh" : "en");
 });
+uploadProbeSizeInput.addEventListener("blur", normalizeUploadProbeSize);
+uploadProbeUnitSelect.addEventListener("change", normalizeUploadProbeSize);
 
 term.onData((data) => {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -753,14 +763,22 @@ function checked(selector) {
 }
 
 function uploadProbeSizeBytes() {
+  normalizeUploadProbeSize();
   const value = Number.parseInt(valueOf("#upload-probe-size"), 10);
-  const units = {
-    mb: 1024 * 1024,
-    kb: 1024,
-    b: 1,
-  };
   const unit = document.querySelector("#upload-probe-unit").value;
-  return Math.max(1, Number.isFinite(value) ? value : 1) * (units[unit] || units.mb);
+  return value * (UPLOAD_PROBE_UNIT_BYTES[unit] || UPLOAD_PROBE_UNIT_BYTES.mb);
+}
+
+function normalizeUploadProbeSize() {
+  const value = Number.parseInt(valueOf("#upload-probe-size"), 10);
+  const unit = document.querySelector("#upload-probe-unit").value;
+  const multiplier = UPLOAD_PROBE_UNIT_BYTES[unit] || UPLOAD_PROBE_UNIT_BYTES.mb;
+  const bytes = Math.max(1, Number.isFinite(value) ? value : 1) * multiplier;
+  if (bytes >= MIN_UPLOAD_PROBE_BYTES) {
+    return;
+  }
+  uploadProbeSizeInput.value = String(MIN_UPLOAD_PROBE_BYTES);
+  uploadProbeUnitSelect.value = "b";
 }
 
 function filenameFromResponse(response, fallbackPath) {
