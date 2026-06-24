@@ -4,6 +4,14 @@ English | [中文](README.zh-CN.md)
 
 A Python web SSH client built with FastAPI, Paramiko, and xterm.js.
 
+## Screenshots
+
+The screenshots below use synthetic demo data only.
+
+![Terminal with Directory panel](https://raw.githubusercontent.com/GGN-2015/py-web-ssh/main/docs/assets/screenshots/terminal-directory.png)
+
+![File transfer progress](https://raw.githubusercontent.com/GGN-2015/py-web-ssh/main/docs/assets/screenshots/file-transfer.png)
+
 ## Quick Start
 
 Install from PyPI:

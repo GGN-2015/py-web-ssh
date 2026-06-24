@@ -4,6 +4,14 @@
 
 一个基于 FastAPI、Paramiko 和 xterm.js 的 Python Web SSH 客户端。
 
+## 界面展示
+
+以下截图只使用合成演示数据。
+
+![终端与 Directory 面板](https://raw.githubusercontent.com/GGN-2015/py-web-ssh/main/docs/assets/screenshots/terminal-directory.png)
+
+![文件传输进度](https://raw.githubusercontent.com/GGN-2015/py-web-ssh/main/docs/assets/screenshots/file-transfer.png)
+
 ## 快速开始
 
 从 PyPI 安装：
