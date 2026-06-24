@@ -65,6 +65,8 @@ py-web-ssh.exe --host 127.0.0.1 --auto-port --launch-browser
 
 连接表单支持密码、浏览器上传私钥、私钥口令，以及使用服务端进程用户默认 `~/.ssh` 密钥。
 
+浏览器上传的私钥会使用当前安装的 Paramiko 运行时可用的私钥解析器处理，包括 Ed25519、ECDSA、RSA，以及在受支持时的旧式 DSA。
+
 如果没有填写密码、没有上传自定义私钥，也没有启用服务端本机密钥查找，py-web-ssh 会优先尝试 SSH none authentication。这支持那些不需要密码也不需要公钥即可登录的服务器。
 
 每次交互 SSH 连接都会在终端中显示服务器 host key 指纹，并等待浏览器用户输入 `Y` 或 `N` 后才继续认证。程序不使用 `known_hosts` 校验。

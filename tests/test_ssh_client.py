@@ -1,3 +1,4 @@
+import io
 import socket
 
 import paramiko
@@ -5,6 +6,7 @@ import paramiko
 from webssh.ssh_client import (
     HostKeyInfo,
     _authenticate,
+    _load_private_key,
     _prepare_security_options,
     get_supported_algorithms,
     supported_algorithms_payload,
@@ -88,6 +90,32 @@ def test_validate_disabled_algorithms_rejects_unknown_values() -> None:
         assert "Unsupported SSH algorithm selections" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_load_private_key_supports_ed25519_openssh_private_keys() -> None:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key_text = Ed25519PrivateKey.generate().private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    loaded = _load_private_key(key_text.decode("utf-8"), None)
+
+    assert loaded.get_name() == "ssh-ed25519"
+
+
+def test_load_private_key_skips_missing_paramiko_key_classes(monkeypatch) -> None:
+    generated = paramiko.RSAKey.generate(1024)
+    output = io.StringIO()
+    generated.write_private_key(output)
+    monkeypatch.delattr(paramiko, "DSSKey", raising=False)
+
+    loaded = _load_private_key(output.getvalue(), None)
+
+    assert loaded.get_name() == "ssh-rsa"
 
 
 class FakeAuthTransport:

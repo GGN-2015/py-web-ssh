@@ -65,6 +65,8 @@ If any argument is passed to the exe, it follows the same CLI behavior as the Py
 
 The connection form supports password authentication, browser-uploaded private keys, private-key passphrases, and server-local key lookup from the process user's default `~/.ssh` keys.
 
+Browser-uploaded private keys are parsed with the private-key loaders available in the installed Paramiko runtime, including Ed25519, ECDSA, RSA, and legacy DSA when supported.
+
 If no password, no custom private key, and no server-local key lookup are used, py-web-ssh tries SSH none authentication first. This supports servers that allow login without a password or public key.
 
 Every interactive SSH connection shows the server host key fingerprint in the terminal and waits for the browser user to type `Y` or `N` before authentication continues. `known_hosts` verification is not used.

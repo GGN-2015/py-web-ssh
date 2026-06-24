@@ -19,6 +19,8 @@ LogCallback = Callable[[str, str, str | None], None]
 AlgorithmSelections = dict[str, list[str] | tuple[str, ...] | set[str]]
 AlgorithmMap = dict[str, tuple[str, ...]]
 ALGORITHM_GROUPS = ("kex", "ciphers", "digests", "key_types", "pubkeys")
+PREFERRED_PRIVATE_KEY_CLASS_NAMES = ("Ed25519Key", "ECDSAKey", "RSAKey", "DSSKey")
+IGNORED_PRIVATE_KEY_CLASS_NAMES = {"AgentKey", "PKey"}
 ALGORITHM_GROUP_LABELS = {
     "kex": "Key exchange",
     "ciphers": "Ciphers",
@@ -401,18 +403,36 @@ def _try_none_auth(
 
 def _load_private_key(text: str, passphrase: str | None) -> paramiko.PKey:
     errors: list[str] = []
-    key_classes = [
-        paramiko.Ed25519Key,
-        paramiko.ECDSAKey,
-        paramiko.RSAKey,
-        paramiko.DSSKey,
-    ]
+    key_classes = _private_key_classes()
+    if not key_classes:
+        raise paramiko.SSHException("No Paramiko private key loaders are available.")
     for key_class in key_classes:
         try:
             return key_class.from_private_key(io.StringIO(text), password=passphrase)
         except Exception as exc:
             errors.append(f"{key_class.__name__}: {exc}")
     raise paramiko.SSHException("Could not parse private key. Tried: " + "; ".join(errors))
+
+
+def _private_key_classes() -> tuple[type[paramiko.PKey], ...]:
+    classes_by_name: dict[str, type[paramiko.PKey]] = {}
+    for name in dir(paramiko):
+        if name in IGNORED_PRIVATE_KEY_CLASS_NAMES or not name.endswith("Key"):
+            continue
+        key_class = getattr(paramiko, name, None)
+        if not isinstance(key_class, type):
+            continue
+        try:
+            if not issubclass(key_class, paramiko.PKey):
+                continue
+        except TypeError:
+            continue
+        if callable(getattr(key_class, "from_private_key", None)):
+            classes_by_name[name] = key_class
+
+    ordered_names = [name for name in PREFERRED_PRIVATE_KEY_CLASS_NAMES if name in classes_by_name]
+    ordered_names.extend(name for name in sorted(classes_by_name) if name not in ordered_names)
+    return tuple(classes_by_name[name] for name in ordered_names)
 
 
 def _load_default_private_keys(passphrase: str | None, log: LogCallback) -> list[paramiko.PKey]:
