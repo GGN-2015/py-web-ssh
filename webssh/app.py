@@ -3,6 +3,10 @@ from __future__ import annotations
 import asyncio
 import argparse
 import base64
+import os
+import socket
+import sys
+import webbrowser
 from html import escape
 from pathlib import Path
 from typing import Annotated
@@ -36,6 +40,7 @@ STATIC_DIR = BASE_DIR / "static"
 PUBLIC_PATHS = {"/", "/api/auth/status", "/api/auth/login", "/favicon.ico"}
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8022
+WINDOWS_EXE_DEFAULT_ARGS = ["--host", "127.0.0.1", "--auto-port", "--launch-browser"]
 
 app = FastAPI(title="py-web-ssh", version=__version__)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -383,15 +388,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="py-web-ssh")
     parser.add_argument("--host", default=DEFAULT_HOST, help="Host interface to bind.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to listen on.")
+    parser.add_argument(
+        "--auto-port",
+        action="store_true",
+        help="Start at --port and bind the first available port.",
+    )
+    parser.add_argument(
+        "--launch-browser",
+        action="store_true",
+        help="Open the web UI in the system default browser after the server starts.",
+    )
     add_pin_argument(parser)
     add_runtime_lock_arguments(parser)
     return parser
 
 
-def main() -> None:
-    import uvicorn
-
-    args = build_arg_parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = build_arg_parser().parse_args(_effective_cli_args(argv))
 
     configure_pin(args.pin)
     configure_runtime_locks(
@@ -402,7 +415,160 @@ def main() -> None:
         lock_password=args.lock_pwd,
         lock_private_key=args.lock_private_key,
     )
-    uvicorn.run("webssh.app:app", host=args.host, port=args.port, reload=False)
+    run_server(args.host, args.port, launch_browser=args.launch_browser, auto_port=args.auto_port)
+
+
+def _effective_cli_args(argv: list[str] | None = None) -> list[str]:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args and _is_windows_frozen_exe():
+        return WINDOWS_EXE_DEFAULT_ARGS.copy()
+    return args
+
+
+def _is_windows_frozen_exe() -> bool:
+    return os.name == "nt" and bool(getattr(sys, "frozen", False))
+
+
+def run_server(
+    host: str,
+    port: int,
+    launch_browser: bool = False,
+    auto_port: bool = False,
+) -> None:
+    import uvicorn
+
+    sockets = None
+    bind_port = port
+    if auto_port:
+        sockets, bind_port = _bind_auto_port_sockets(host, port)
+        print(f"Auto-selected port {bind_port}.", flush=True)
+
+    config = uvicorn.Config("webssh.app:app", host=host, port=bind_port, reload=False)
+    server = uvicorn.Server(config)
+    if launch_browser:
+        _install_browser_launch_hook(server, host, bind_port)
+    try:
+        server.run(sockets=sockets)
+    finally:
+        if sockets is not None:
+            for sock in sockets:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+
+def _bind_auto_port_sockets(host: str, start_port: int) -> tuple[list[socket.socket], int]:
+    if start_port < 1 or start_port > 65535:
+        raise ValueError("auto-port requires --port to be between 1 and 65535.")
+
+    last_error: OSError | None = None
+    for port in range(start_port, 65536):
+        try:
+            return [_bind_tcp_socket(host, port)], port
+        except OSError as exc:
+            last_error = exc
+            if not _is_port_bind_retryable(exc):
+                raise
+
+    message = f"No available port found for host {host!r} from {start_port} to 65535."
+    raise OSError(message) from last_error
+
+
+def _bind_tcp_socket(host: str, port: int) -> socket.socket:
+    last_error: OSError | None = None
+    for family, socktype, proto, _canonname, sockaddr in socket.getaddrinfo(
+        host,
+        port,
+        type=socket.SOCK_STREAM,
+    ):
+        sock = socket.socket(family, socktype, proto)
+        try:
+            sock.bind(sockaddr)
+            sock.listen(socket.SOMAXCONN)
+            sock.set_inheritable(False)
+            return sock
+        except OSError as exc:
+            last_error = exc
+            sock.close()
+    if last_error is None:
+        raise OSError(f"Could not resolve host {host!r}.")
+    raise last_error
+
+
+def _is_port_bind_retryable(exc: OSError) -> bool:
+    retryable_errnos = {
+        13,
+        48,
+        98,
+        10013,
+        10048,
+    }
+    return getattr(exc, "errno", None) in retryable_errnos
+
+
+def _install_browser_launch_hook(server, host: str, port: int, opener=webbrowser.open) -> None:
+    original_startup = server.startup
+    launched = False
+
+    async def startup(*args, **kwargs):
+        nonlocal launched
+        await original_startup(*args, **kwargs)
+        if not launched and getattr(server, "started", False):
+            launched = True
+            try:
+                opener(_browser_launch_url(server, host, port))
+            except Exception as exc:
+                print(f"Could not launch browser: {exc}", file=sys.stderr)
+
+    server.startup = startup
+
+
+def _browser_launch_url(server, host: str, port: int) -> str:
+    candidates = _server_socket_addresses(server)
+    if not candidates:
+        candidates = [(host, port)]
+    browser_host, browser_port = min(
+        (_browser_address(address_host, address_port) for address_host, address_port in candidates),
+        key=_browser_address_priority,
+    )
+    return f"http://{_format_url_host(browser_host)}:{browser_port}"
+
+
+def _server_socket_addresses(server) -> list[tuple[str, int]]:
+    addresses: list[tuple[str, int]] = []
+    for uvicorn_server in getattr(server, "servers", []) or []:
+        for sock in getattr(uvicorn_server, "sockets", []) or []:
+            try:
+                address = sock.getsockname()
+            except OSError:
+                continue
+            if isinstance(address, tuple) and len(address) >= 2:
+                addresses.append((str(address[0]), int(address[1])))
+    return addresses
+
+
+def _browser_address(host: str, port: int) -> tuple[str, int]:
+    if host == "0.0.0.0":
+        return "127.0.0.1", port
+    if host == "::":
+        return "::1", port
+    return host, port
+
+
+def _browser_address_priority(address: tuple[str, int]) -> tuple[int, str, int]:
+    host, port = address
+    if host == "127.0.0.1":
+        return (0, host, port)
+    if host in {"localhost", "::1"}:
+        return (1, host, port)
+    return (2, host, port)
+
+
+def _format_url_host(host: str) -> str:
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        return f"[{host}]"
+    return host
 
 
 if __name__ == "__main__":

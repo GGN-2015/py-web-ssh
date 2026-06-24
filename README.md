@@ -52,6 +52,23 @@ Enable PIN:
 py-web-ssh --pin 123456
 ```
 
+Open the web UI automatically after the server starts:
+
+```bash
+py-web-ssh --launch-browser
+```
+
+When `--launch-browser` is enabled, the browser opens only after the server has successfully started. If multiple listening addresses are available, py-web-ssh prefers `127.0.0.1` for the browser URL.
+
+Choose the first available port, starting from `--port`:
+
+```bash
+py-web-ssh --auto-port
+py-web-ssh --host 127.0.0.1 --port 8022 --auto-port --launch-browser
+```
+
+With `--auto-port`, py-web-ssh first tries the configured port, then keeps trying higher ports until it can bind one.
+
 Set the page title and subtitle:
 
 ```bash
@@ -69,6 +86,36 @@ py-web-ssh --lock-private-key C:\secrets\id_ed25519
 The values of `--lock-pwd` and `--lock-private-key` are used only on the server and are not sent to the browser through the config API. `--lock-private-key` points to a server-local file path, not a browser-uploaded file.
 
 The frontend loads xterm.js, the fit addon, and the serialize addon from jsDelivr by default. For offline intranet deployment, vendor these static assets into `webssh/static/` and replace the CDN URLs in `index.html`.
+
+### Windows One-File Exe
+
+On Windows, `build.py` can package py-web-ssh into a single executable file with PyInstaller. Run it from the project root with the Python environment that has this project and its runtime dependencies installed:
+
+```bash
+python build.py
+```
+
+The output is written to:
+
+```text
+dist\py-web-ssh.exe
+```
+
+Run the packaged server the same way as the Python entry point:
+
+```bash
+dist\py-web-ssh.exe --host 0.0.0.0 --port 8022
+```
+
+`build.py` installs `pyinstaller>=6.0` into the active environment if PyInstaller is missing. Use `--no-install` to fail instead, `--name` to change the exe name, and `--extra-arg` to pass additional arguments through to PyInstaller.
+
+When the packaged Windows exe is started without arguments, it behaves as if it was started with:
+
+```bash
+py-web-ssh.exe --host 127.0.0.1 --auto-port --launch-browser
+```
+
+If any argument is passed to the exe, it follows the normal Python package CLI behavior.
 
 ### API Overview
 
@@ -136,6 +183,23 @@ uvicorn webssh.app:app --host 0.0.0.0 --port 8022
 py-web-ssh --pin 123456
 ```
 
+服务启动成功后自动打开网页：
+
+```bash
+py-web-ssh --launch-browser
+```
+
+启用 `--launch-browser` 后，只有在服务端确认启动成功时才会打开浏览器，并且只打开一次。如果存在多个监听地址，py-web-ssh 会优先使用 `127.0.0.1` 作为浏览器访问地址。
+
+从 `--port` 开始自动选择第一个可用端口：
+
+```bash
+py-web-ssh --auto-port
+py-web-ssh --host 127.0.0.1 --port 8022 --auto-port --launch-browser
+```
+
+启用 `--auto-port` 后，py-web-ssh 会先尝试配置的端口；如果端口被占用，就继续向上尝试，直到找到可以绑定的端口。
+
 设置网页标题和副标题：
 
 ```bash
@@ -153,6 +217,36 @@ py-web-ssh --lock-private-key C:\secrets\id_ed25519
 `--lock-pwd` 和 `--lock-private-key` 的值只在服务端使用，不会通过配置接口发送给浏览器。`--lock-private-key` 指向的是服务端本机文件路径，不是浏览器上传的文件。
 
 前端默认从 jsDelivr 加载 xterm.js、fit addon 和 serialize addon。离线内网部署时，请把这些静态资源 vendoring 到 `webssh/static/` 并替换 `index.html` 里的 CDN 地址。
+
+### Windows 单文件 exe
+
+在 Windows 下，`build.py` 可以通过 PyInstaller 把 py-web-ssh 打包成单文件可执行程序。请在已经安装本项目和运行时依赖的 Python 环境中，从项目根目录执行：
+
+```bash
+python build.py
+```
+
+输出文件会生成到：
+
+```text
+dist\py-web-ssh.exe
+```
+
+打包后的服务端启动参数与 Python 入口保持一致：
+
+```bash
+dist\py-web-ssh.exe --host 0.0.0.0 --port 8022
+```
+
+如果当前环境缺少 PyInstaller，`build.py` 会自动安装 `pyinstaller>=6.0`。可以用 `--no-install` 改为缺失时报错，用 `--name` 修改 exe 名称，也可以重复使用 `--extra-arg` 向 PyInstaller 透传额外参数。
+
+打包后的 Windows exe 如果无参数启动，会等同于使用下面的参数：
+
+```bash
+py-web-ssh.exe --host 127.0.0.1 --auto-port --launch-browser
+```
+
+如果启动 exe 时传入了任何参数，则保持普通 Python 包命令行行为。
 
 ### API 概览
 
