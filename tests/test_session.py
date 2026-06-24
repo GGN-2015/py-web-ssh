@@ -7,8 +7,6 @@ from webssh.session import (
     CWD_OSC_PREFIX,
     CWD_LISTING_OSC_PREFIX,
     CWD_OSC_SUFFIX,
-    HIDDEN_COMMAND_ECHO_OFF,
-    HIDDEN_COMMAND_ECHO_ON,
     SessionManager,
     TerminalSession,
     parse_ls_al_listing,
@@ -225,7 +223,7 @@ def test_hidden_terminal_command_echo_ignores_prompt_rewrap_sequences() -> None:
     assert session._filter_hidden_terminal_output(wrapped_echo) == b"visible"
 
 
-def test_send_hidden_terminal_command_disables_remote_pty_echo() -> None:
+def test_send_hidden_terminal_command_starts_hidden_transaction_without_stty() -> None:
     class FakeChannel:
         def __init__(self) -> None:
             self.sent: list[bytes] = []
@@ -242,18 +240,51 @@ def test_send_hidden_terminal_command_disables_remote_pty_echo() -> None:
 
     session._send_hidden_terminal_command("secret command")
 
-    assert channel.sent == [
-        (
-            f"{HIDDEN_COMMAND_ECHO_OFF}\n"
-            "secret command\n"
-            f"{HIDDEN_COMMAND_ECHO_ON}\n"
-        ).encode("utf-8")
-    ]
-    assert session._hidden_command_echoes == [
-        HIDDEN_COMMAND_ECHO_OFF.encode("ascii"),
-        b"secret command",
-        HIDDEN_COMMAND_ECHO_ON.encode("ascii"),
-    ]
+    assert channel.sent == [b"secret command\n"]
+    assert session._hidden_terminal_transaction_active is True
+    assert session._hidden_command_echoes == []
+
+
+def test_hidden_transaction_suppresses_install_echo_and_extra_prompts() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session.state = "connected"
+    session._hidden_terminal_transaction_active = True
+    ready = session._cwd_ready_osc_prefix + b"1" + CWD_OSC_SUFFIX
+    output = (
+        b"ubuntu@host:~$ secret command\r\n"
+        b"ubuntu@host:~$ \r\n"
+        + ready
+        + b"ubuntu@host:~$ \r\n"
+    )
+
+    assert session._filter_hidden_terminal_output(output) == b""
+    assert session.replay_payload()["shell_ready"] is True
+    assert session._hidden_terminal_transaction_active is False
+    assert session._hidden_terminal_transaction_closing is True
+
+
+def test_visible_input_clears_hidden_transaction_closing_prompt_filter() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._hidden_terminal_transaction_closing = True
+
+    session.send_input(b"ls\r")
+
+    assert channel.sent == [b"ls\r"]
+    assert session._hidden_terminal_transaction_closing is False
 
 
 def test_cwd_sync_off_filters_but_does_not_store_hidden_cwd() -> None:

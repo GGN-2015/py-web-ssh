@@ -30,8 +30,6 @@ CWD_TOKEN_PLACEHOLDER = "__PY_WEB_SSH_CWD_TOKEN__"
 CWD_REPORT_FUNCTION = "__py_web_ssh_cwd_report"
 CWD_LIST_FUNCTION = "__py_web_ssh_cwd_list"
 CWD_READY_FUNCTION = "__py_web_ssh_cwd_ready"
-HIDDEN_COMMAND_ECHO_OFF = "stty -echo 2>/dev/null"
-HIDDEN_COMMAND_ECHO_ON = "stty echo 2>/dev/null"
 CWD_INSTALL_COMMAND_TEMPLATE = (
     "__py_web_ssh_cwd_ready(){ "
     "printf '\\033]6970;ready;" + CWD_TOKEN_PLACEHOLDER + "=1\\007' >&2; "
@@ -104,6 +102,8 @@ class TerminalSession:
         self._terminal_filter_buffer = b""
         self._hidden_echo_filter_buffer = b""
         self._hidden_command_echoes: list[bytes] = []
+        self._hidden_terminal_transaction_active = False
+        self._hidden_terminal_transaction_closing = False
         self._last_client_detached_at: float | None = self._clock()
         self._reaped = False
 
@@ -220,6 +220,9 @@ class TerminalSession:
         with self._channel_lock:
             if self._channel is None or self.state != "connected":
                 raise RuntimeError("SSH channel is not connected.")
+            if self._hidden_terminal_transaction_active:
+                raise RuntimeError("SSH channel is preparing the hidden shell monitor.")
+            self._clear_hidden_terminal_transaction()
             self._set_shell_prompt_ready(False)
             self._channel.sendall(data)
 
@@ -295,6 +298,7 @@ class TerminalSession:
             with self._channel_lock:
                 self._channel = channel
             self._set_state("connected")
+            self._drain_ready_terminal_output(channel)
             self._install_cwd_monitor()
             self.log("info", "Interactive SSH terminal is ready.", None)
 
@@ -360,17 +364,40 @@ class TerminalSession:
 
     def _send_hidden_terminal_command(self, command: str) -> None:
         echo = command.encode("utf-8")
-        echo_off = HIDDEN_COMMAND_ECHO_OFF.encode("ascii")
-        echo_on = HIDDEN_COMMAND_ECHO_ON.encode("ascii")
-        payload = b"\n".join((echo_off, echo, echo_on, b""))
+        payload = echo + b"\n"
         with self._channel_lock:
             if self._channel is None or self.state != "connected":
                 return
             with self._lock:
-                self._hidden_command_echoes.append(echo_off)
-                self._hidden_command_echoes.append(echo)
-                self._hidden_command_echoes.append(echo_on)
+                self._hidden_terminal_transaction_active = True
+                self._hidden_terminal_transaction_closing = False
+                self._hidden_command_echoes.clear()
+                self._hidden_echo_filter_buffer = b""
             self._channel.sendall(payload)
+
+    def _drain_ready_terminal_output(
+        self,
+        channel: paramiko.Channel,
+        quiet_seconds: float = 0.08,
+        max_seconds: float = 1.5,
+    ) -> None:
+        deadline = self._clock() + max_seconds
+        quiet_deadline = self._clock() + quiet_seconds
+        while not self._stop.is_set() and self._clock() < deadline:
+            try:
+                if channel.recv_ready():
+                    data = channel.recv(64 * 1024)
+                    if not data:
+                        return
+                    self._append_output(data)
+                    quiet_deadline = self._clock() + quiet_seconds
+                elif self._clock() >= quiet_deadline:
+                    return
+                else:
+                    time.sleep(0.01)
+            except Exception as exc:
+                if "timed out" not in str(exc).lower():
+                    raise
 
     def _filter_hidden_terminal_output(self, data: bytes) -> bytes:
         pending = self._terminal_filter_buffer + data
@@ -382,14 +409,17 @@ class TerminalSession:
             if marker is None:
                 tail_length = self._hidden_osc_prefix_tail_length(pending)
                 if tail_length:
-                    visible.extend(pending[:-tail_length])
+                    if not self._hidden_terminal_output_suppressed():
+                        visible.extend(pending[:-tail_length])
                     self._terminal_filter_buffer = pending[-tail_length:]
                 else:
-                    visible.extend(pending)
+                    if not self._hidden_terminal_output_suppressed():
+                        visible.extend(pending)
                 break
 
             kind, prefix, start = marker
-            visible.extend(pending[:start])
+            if not self._hidden_terminal_output_suppressed():
+                visible.extend(pending[:start])
             payload_start = start + len(prefix)
             end = pending.find(CWD_OSC_SUFFIX, payload_start)
             if end < 0:
@@ -404,9 +434,30 @@ class TerminalSession:
                 self._set_current_directory_listing_from_base64(payload)
             else:
                 self._set_shell_prompt_ready(True)
+                self._finish_hidden_terminal_transaction()
             pending = pending[end + len(CWD_OSC_SUFFIX) :]
 
         return self._remove_hidden_command_echoes(bytes(visible))
+
+    def _hidden_terminal_output_suppressed(self) -> bool:
+        return self._hidden_terminal_transaction_active or self._hidden_terminal_transaction_closing
+
+    def _finish_hidden_terminal_transaction(self) -> None:
+        with self._lock:
+            if not self._hidden_terminal_transaction_active:
+                return
+            self._hidden_terminal_transaction_active = False
+            self._hidden_terminal_transaction_closing = True
+            self._hidden_command_echoes.clear()
+            self._hidden_echo_filter_buffer = b""
+
+    def _clear_hidden_terminal_transaction(self) -> None:
+        with self._lock:
+            self._hidden_terminal_transaction_active = False
+            self._hidden_terminal_transaction_closing = False
+            self._terminal_filter_buffer = b""
+            self._hidden_echo_filter_buffer = b""
+            self._hidden_command_echoes.clear()
 
     def _next_hidden_osc_marker(self, data: bytes) -> tuple[str, bytes, int] | None:
         markers = [
