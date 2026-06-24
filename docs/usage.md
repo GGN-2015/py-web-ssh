@@ -138,6 +138,8 @@ Before upload, the target path is probed. If the target is a remote directory, t
 
 The upload command-size probe starts at 1 MiB by default, or the value configured with `--block-size`. The Files panel lets the user choose a positive integer value with `TB`, `GB`, `MB`, `KB`, or `B` units. The frontend clamps values below `64 B` to `64 B`; the backend also enforces a minimum of `64 B`. If the initial probe fails because the command is too large or the connection closes, py-web-ssh binary-searches downward and writes the selected size to the logs.
 
+The upload progress bar is split into two weighted phases. Browser-to-server upload progress fills the first `30%`; the server-to-remote-SSH upload progress fills the remaining `70%`.
+
 ## CWD Sync
 
 The Files panel includes a read-only current working directory field and a checked-by-default `CWD Sync` checkbox. When enabled, py-web-ssh installs a hidden shell-side monitor after login and filters its private OSC reports before terminal output reaches the browser. The field updates when the remote shell prompt is reached after directory changes such as `cd`, `pushd`, or `popd`.

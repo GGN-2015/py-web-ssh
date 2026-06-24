@@ -49,6 +49,8 @@ const CONNECT_CONFIG_CACHE_KEY = "py_web_ssh_last_connect_config";
 const CONNECT_CONFIG_CRYPTO_ALGORITHM = "AES-GCM";
 const CONNECT_CONFIG_IV_BYTES = 12;
 const MIN_UPLOAD_PROBE_BYTES = 64;
+const UPLOAD_CLIENT_PROGRESS_WEIGHT = 0.3;
+const UPLOAD_REMOTE_PROGRESS_WEIGHT = 0.7;
 const UPLOAD_PROBE_UNIT_BYTES = {
   tb: 1024 * 1024 * 1024 * 1024,
   gb: 1024 * 1024 * 1024,
@@ -486,6 +488,12 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     transferId: null,
     pollTimer: null,
     cancelled: false,
+    clientUploadDone: 0,
+    clientUploadTotal: file.size,
+    clientUploadComplete: false,
+    remoteUploadDone: 0,
+    remoteUploadTotal: file.size,
+    phase: "preparing",
     fileSize: file.size,
     startedAt: Date.now(),
   };
@@ -502,6 +510,10 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     uploadState.xhr = xhrUpload.xhr;
     const result = await xhrUpload.promise;
     applySuccessfulUploadBlockSize(result);
+    uploadState.clientUploadDone = uploadState.clientUploadTotal || file.size;
+    uploadState.clientUploadComplete = true;
+    uploadState.remoteUploadDone = result.bytes_transferred || file.size;
+    uploadState.phase = "complete";
     showUploadProgress(result.bytes_transferred, file.size, t("uploadComplete"), uploadState);
     setUploadActionState("complete");
     appendLogLine(`${t("uploadComplete")}: ${JSON.stringify(result)}`);
@@ -533,11 +545,23 @@ function uploadWithXhr(url, form, uploadState) {
     xhr.open("POST", url);
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {
+        uploadState.clientUploadDone = event.loaded;
+        uploadState.clientUploadTotal = event.total;
+        uploadState.clientUploadComplete = event.loaded >= event.total;
+        uploadState.phase = "client";
         showUploadProgress(event.loaded, event.total, t("sendingToServer"), uploadState);
       }
     });
+    xhr.upload.addEventListener("load", () => {
+      uploadState.clientUploadDone = uploadState.clientUploadTotal || uploadState.fileSize;
+      uploadState.clientUploadComplete = true;
+      uploadState.phase = "client";
+      showUploadProgress(uploadState.clientUploadDone, uploadState.clientUploadTotal, t("sendingToServer"), uploadState);
+    });
     xhr.addEventListener("load", () => {
       if (xhr.status >= 200 && xhr.status < 300) {
+        uploadState.clientUploadDone = uploadState.clientUploadTotal || uploadState.fileSize;
+        uploadState.clientUploadComplete = true;
         resolve(JSON.parse(xhr.responseText));
       } else {
         reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
@@ -1595,11 +1619,44 @@ function filenameFromResponse(response, fallbackPath) {
 
 function showUploadProgress(done, total, message, uploadState = activeUpload) {
   uploadProgress.classList.remove("hidden");
-  const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  uploadProgressBar.value = percent;
-  const eta = formatUploadEta(done, total, uploadState);
+  const progress = uploadState
+    ? compositeUploadProgress(done, total, uploadState)
+    : { percent: total ? Math.min(100, Math.round((done / total) * 100)) : 0, done, total };
+  uploadProgressBar.value = progress.percent;
+  const eta = formatUploadEta(progress.done, progress.total, uploadState);
   uploadProgressText.textContent =
     `${message} ${formatBytes(done)}${total ? ` / ${formatBytes(total)}` : ""}${eta ? ` · ${t("eta")} ${eta}` : ""}`;
+}
+
+function compositeUploadProgress(done, total, uploadState) {
+  const clientTotal = Math.max(0, uploadState.clientUploadTotal || uploadState.fileSize || total || 0);
+  const remoteTotal = Math.max(0, uploadState.remoteUploadTotal || uploadState.fileSize || total || 0);
+  if (uploadState.phase === "complete") {
+    return { percent: 100, done: clientTotal + remoteTotal, total: clientTotal + remoteTotal };
+  }
+  let clientRatio = transferRatio(uploadState.clientUploadDone || 0, clientTotal);
+  let remoteRatio = transferRatio(uploadState.remoteUploadDone || 0, remoteTotal);
+  if (uploadState.phase === "client") {
+    remoteRatio = 0;
+  } else if (uploadState.phase === "remote") {
+    clientRatio = Math.max(clientRatio, 1);
+  }
+  const percent = Math.min(
+    100,
+    Math.round(
+      (clientRatio * UPLOAD_CLIENT_PROGRESS_WEIGHT + remoteRatio * UPLOAD_REMOTE_PROGRESS_WEIGHT) * 100,
+    ),
+  );
+  const weightedTotal = clientTotal * UPLOAD_CLIENT_PROGRESS_WEIGHT + remoteTotal * UPLOAD_REMOTE_PROGRESS_WEIGHT;
+  const weightedDone =
+    clientTotal * clientRatio * UPLOAD_CLIENT_PROGRESS_WEIGHT +
+    remoteTotal * remoteRatio * UPLOAD_REMOTE_PROGRESS_WEIGHT;
+  return { percent, done: weightedDone, total: weightedTotal };
+}
+
+function transferRatio(done, total) {
+  if (!total || total <= 0) return done > 0 ? 1 : 0;
+  return Math.max(0, Math.min(1, done / total));
 }
 
 function showDownloadProgress(done, total, message, downloadState = activeDownload) {
@@ -1650,6 +1707,11 @@ function startUploadPolling(uploadState) {
       const response = await fetch(`/api/transfers/${uploadState.transferId}`);
       if (!response.ok) return;
       const status = await response.json();
+      if (!uploadState.clientUploadComplete) return;
+      uploadState.phase = status.state === "completed" ? "complete" : "remote";
+      uploadState.clientUploadDone = uploadState.clientUploadTotal || uploadState.fileSize;
+      uploadState.remoteUploadDone = status.bytes_transferred || 0;
+      uploadState.remoteUploadTotal = status.total_bytes || uploadState.fileSize;
       showUploadProgress(
         status.bytes_transferred || 0,
         status.total_bytes || uploadState.fileSize,

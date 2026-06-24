@@ -120,6 +120,20 @@ def test_upload_progress_displays_eta() -> None:
     assert "${eta}" in script
 
 
+def test_upload_progress_splits_client_and_remote_phases() -> None:
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert "const UPLOAD_CLIENT_PROGRESS_WEIGHT = 0.3;" in script
+    assert "const UPLOAD_REMOTE_PROGRESS_WEIGHT = 0.7;" in script
+    assert "clientUploadComplete: false" in script
+    assert 'xhr.upload.addEventListener("load"' in script
+    assert "if (!uploadState.clientUploadComplete) return;" in script
+    assert 'uploadState.phase = status.state === "completed" ? "complete" : "remote";' in script
+    assert "function compositeUploadProgress(done, total, uploadState)" in script
+    assert "function transferRatio(done, total)" in script
+    assert "clientRatio * UPLOAD_CLIENT_PROGRESS_WEIGHT + remoteRatio * UPLOAD_REMOTE_PROGRESS_WEIGHT" in script
+
+
 def test_upload_form_exposes_initial_probe_size_control() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")
