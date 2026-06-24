@@ -214,19 +214,41 @@
                   </div>
                 </label>
                 <p id="directory-panel-message" class="panel-help"></p>
-                <div class="directory-table-wrap">
-                  <table id="directory-table" class="directory-table">
-                    <thead>
-                      <tr>
-                        <th data-i18n="fileName">Name</th>
-                        <th data-i18n="fileSize">Size</th>
-                        <th data-i18n="fileMode">Mode</th>
-                        <th data-i18n="fileModified">Modified</th>
-                        <th data-i18n="fileAction">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody id="directory-table-body"></tbody>
-                  </table>
+                <div class="directory-table-stack">
+                  <section class="directory-table-section">
+                    <h3 data-i18n="visibleFiles">Visible files</h3>
+                    <div class="directory-table-wrap">
+                      <table id="directory-visible-table" class="directory-table">
+                        <thead>
+                          <tr>
+                            <th data-i18n="fileName">Name</th>
+                            <th data-i18n="fileSize">Size</th>
+                            <th data-i18n="fileMode">Mode</th>
+                            <th data-i18n="fileModified">Modified</th>
+                            <th data-i18n="fileAction">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody id="directory-visible-table-body"></tbody>
+                      </table>
+                    </div>
+                  </section>
+                  <section class="directory-table-section">
+                    <h3 data-i18n="hiddenFiles">Hidden files</h3>
+                    <div class="directory-table-wrap">
+                      <table id="directory-hidden-table" class="directory-table">
+                        <thead>
+                          <tr>
+                            <th data-i18n="fileName">Name</th>
+                            <th data-i18n="fileSize">Size</th>
+                            <th data-i18n="fileMode">Mode</th>
+                            <th data-i18n="fileModified">Modified</th>
+                            <th data-i18n="fileAction">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody id="directory-hidden-table-body"></tbody>
+                      </table>
+                    </div>
+                  </section>
                 </div>
               </div>
             </aside>

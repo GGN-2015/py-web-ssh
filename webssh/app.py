@@ -214,6 +214,7 @@ def upload(
     message = f"Uploaded {transferred} bytes to {final_remote_path} using {method}."
     tracker.complete(transferred, message, remote_path=final_remote_path)
     session.log("info", message, None)
+    session.refresh_directory_listing_if_shell_ready()
     return FileTransferResponse(
         ok=True,
         method=method,

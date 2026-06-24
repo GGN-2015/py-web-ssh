@@ -553,6 +553,93 @@ def test_delete_file_sends_visible_rm_for_file_entry() -> None:
 
     assert channel.sent == [b"rm -- 'it'\"'\"'works.log'\r"]
     assert session.replay_payload()["shell_ready"] is False
+    assert session._refresh_directory_listing_when_shell_ready is True
+
+
+def test_refresh_directory_listing_requires_shell_prompt_ready() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = False
+
+    refreshed = session.refresh_directory_listing_if_shell_ready()
+
+    assert refreshed is False
+    assert channel.sent == []
+
+
+def test_refresh_directory_listing_sends_hidden_ls_when_shell_ready() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_working_directory = "/srv/app"
+    session._current_directory_listing = [{"name": "old.log", "type": "file"}]
+
+    refreshed = session.refresh_directory_listing_if_shell_ready()
+
+    assert refreshed is True
+    assert channel.sent == [b"__py_web_ssh_cwd_armed=1; __py_web_ssh_cwd_list; __py_web_ssh_cwd_ready\n"]
+    assert session._hidden_terminal_transaction_active is True
+    assert session.replay_payload()["shell_ready"] is False
+    replay = session.replay_payload()
+    assert replay["directory_listing"] == []
+
+
+def test_delete_file_refreshes_directory_listing_when_shell_becomes_ready() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_working_directory = "/srv/app"
+    session._current_directory_listing = [{"name": "old.log", "type": "file"}]
+
+    session.delete_file("old.log")
+    assert channel.sent == [b"rm -- 'old.log'\r"]
+
+    session._filter_hidden_terminal_output(session._cwd_ready_osc_prefix + b"1" + CWD_OSC_SUFFIX)
+
+    assert channel.sent == [
+        b"rm -- 'old.log'\r",
+        b"__py_web_ssh_cwd_armed=1; __py_web_ssh_cwd_list; __py_web_ssh_cwd_ready\n",
+    ]
+    assert session._refresh_directory_listing_when_shell_ready is False
+    assert session.replay_payload()["shell_ready"] is False
+    assert session._hidden_terminal_transaction_active is True
+    assert session._hidden_terminal_transaction_closing is False
 
 
 def test_posix_cwd_monitor_does_not_override_cd_function() -> None:

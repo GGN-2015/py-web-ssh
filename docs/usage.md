@@ -148,6 +148,8 @@ The upload path defaults follow the synced current working directory when CWD Sy
 
 The terminal-side Directory panel uses the same CWD Sync listing. Regular files show `Download` and `Delete`; `Delete` opens an in-app confirmation dialog and, after confirmation, sends a visible `rm -- 'file-name'` command to the shell. Directory entries show `Enter Dir`, which sends a visible `cd 'directory-name'` command. `UP`, `Enter Dir`, and `Delete` are enabled only when the backend has confirmed that the remote session is back at a shell prompt, so they are disabled while another terminal program is active or while the user is typing a command.
 
+The Directory panel splits entries into two equal-height stacked tables: visible files and hidden files. Any entry whose name starts with `.` is treated as hidden. After a successful upload, and after a file delete command returns to a ready shell prompt, py-web-ssh silently refreshes the current directory listing with the hidden CWD Sync channel.
+
 When the SSH session state becomes `closed`, the Directory panel clears its current directory, listing, loading state, and errors back to the initial empty state.
 
 ## Static Assets

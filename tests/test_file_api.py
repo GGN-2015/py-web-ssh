@@ -33,6 +33,10 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
 
     host_key = fake_host_key()
     session._confirmed_host_key = host_key
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    refreshed: list[bool] = []
+    monkeypatch.setattr(session, "refresh_directory_listing_if_shell_ready", lambda: refreshed.append(True) or True)
 
     def fake_upload(
         config,
@@ -86,6 +90,7 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
     assert response.json()["method"] == "shell"
     assert response.json()["remote_path"] == "/tmp/example.txt"
     assert response.json()["upload_block_size_bytes"] == 1536
+    assert refreshed == [True]
 
 
 def test_upload_requires_confirmed_host_key(monkeypatch) -> None:

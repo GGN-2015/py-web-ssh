@@ -266,7 +266,10 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'aria-expanded="false"' in markup
     assert 'id="directory-panel-cwd"' in markup
     assert 'id="directory-up-button"' in markup
-    assert 'id="directory-table-body"' in markup
+    assert 'id="directory-visible-table-body"' in markup
+    assert 'id="directory-hidden-table-body"' in markup
+    assert 'data-i18n="visibleFiles"' in markup
+    assert 'data-i18n="hiddenFiles"' in markup
     assert 'id="download-progress"' in markup
     assert 'id="cancel-download"' in markup
     assert 'id="confirm-dialog"' in markup
@@ -283,6 +286,9 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert "width: var(--directory-tab-width);" in styles
     assert "box-shadow: none;" in styles
     assert ".directory-panel.busy" in styles
+    assert ".directory-table-stack" in styles
+    assert "grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);" in styles
+    assert ".directory-table-section" in styles
     assert "window.setTimeout(() => fitAddon.fit(), 0);" not in script
     assert 'cwdSyncDisabledHint: "Enable CWD Sync to display content."' in script
     assert 'cwdSyncDisabledHint: "启用 CWD Sync 以显示内容。"' in script
@@ -290,6 +296,10 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'enterDirectory: "进入目录"' in script
     assert 'directoryUnreadable: "Directory structure is unreadable."' in script
     assert 'directoryUnreadable: "目录结构不可读"' in script
+    assert 'visibleFiles: "Visible files"' in script
+    assert 'hiddenFiles: "Hidden files"' in script
+    assert 'visibleFiles: "可见文件"' in script
+    assert 'hiddenFiles: "隐藏文件"' in script
     assert 'directoryUp: "UP"' in script
     assert 'deleteFile: "Delete"' in script
     assert 'deleteFile: "删除"' in script
@@ -307,6 +317,9 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'ws.send(JSON.stringify({ type: "delete_file", name: entry.name || "" }));' in script
     assert 'setShellReady(false);' in script
     assert "function renderDirectoryPanel()" in script
+    assert "function isHiddenDirectoryEntry(entry)" in script
+    assert "currentDirectoryEntries.filter((entry) => !isHiddenDirectoryEntry(entry))" in script
+    assert "currentDirectoryEntries.filter(isHiddenDirectoryEntry)" in script
     assert "function startDirectoryDownload(entry)" in script
     assert "function startDownload(remotePath)" in script
     assert ".directory-delete-button" in styles

@@ -31,7 +31,8 @@ const directoryPanelToggle = document.querySelector("#directory-panel-toggle");
 const directoryPanelCwd = document.querySelector("#directory-panel-cwd");
 const directoryUpButton = document.querySelector("#directory-up-button");
 const directoryPanelMessage = document.querySelector("#directory-panel-message");
-const directoryTableBody = document.querySelector("#directory-table-body");
+const directoryVisibleTableBody = document.querySelector("#directory-visible-table-body");
+const directoryHiddenTableBody = document.querySelector("#directory-hidden-table-body");
 const downloadProgress = document.querySelector("#download-progress");
 const downloadProgressText = document.querySelector("#download-progress-text");
 const downloadProgressBar = document.querySelector("#download-progress-bar");
@@ -91,6 +92,8 @@ const translations = {
     directoryPanel: "Directory",
     directoryLoading: "Loading directory...",
     directoryEmpty: "No files in this directory.",
+    visibleFiles: "Visible files",
+    hiddenFiles: "Hidden files",
     cwdSyncDisabledHint: "Enable CWD Sync to display content.",
     fileName: "Name",
     fileSize: "Size",
@@ -198,6 +201,8 @@ const translations = {
     directoryPanel: "目录",
     directoryLoading: "正在加载目录...",
     directoryEmpty: "当前目录没有文件。",
+    visibleFiles: "可见文件",
+    hiddenFiles: "隐藏文件",
     cwdSyncDisabledHint: "启用 CWD Sync 以显示内容。",
     fileName: "名称",
     fileSize: "大小",
@@ -600,6 +605,7 @@ async function deleteDirectoryFile(entry) {
     return;
   }
   ws.send(JSON.stringify({ type: "delete_file", name: entry.name || "" }));
+  setDirectoryListing([], "", true);
   setShellReady(false);
 }
 
@@ -1262,7 +1268,8 @@ function resetDirectoryState() {
 function renderDirectoryPanel() {
   directoryPanelCwd.value = cwdSyncEnabled ? currentWorkingDirectory : "";
   directoryUpButton.disabled = !directoryUpEnabled() || Boolean(activeDownload);
-  directoryTableBody.textContent = "";
+  directoryVisibleTableBody.textContent = "";
+  directoryHiddenTableBody.textContent = "";
   if (!cwdSyncEnabled) {
     directoryPanelMessage.textContent = t("cwdSyncDisabledHint");
     return;
@@ -1281,9 +1288,18 @@ function renderDirectoryPanel() {
     directoryPanelMessage.textContent = "";
   }
 
-  for (const entry of currentDirectoryEntries) {
-    directoryTableBody.appendChild(renderDirectoryRow(entry));
+  const visibleEntries = currentDirectoryEntries.filter((entry) => !isHiddenDirectoryEntry(entry));
+  const hiddenEntries = currentDirectoryEntries.filter(isHiddenDirectoryEntry);
+  for (const entry of visibleEntries) {
+    directoryVisibleTableBody.appendChild(renderDirectoryRow(entry));
   }
+  for (const entry of hiddenEntries) {
+    directoryHiddenTableBody.appendChild(renderDirectoryRow(entry));
+  }
+}
+
+function isHiddenDirectoryEntry(entry) {
+  return String((entry && entry.name) || "").startsWith(".");
 }
 
 function renderDirectoryRow(entry) {

@@ -636,6 +636,27 @@ progress {
   user-select: none;
 }
 
+.directory-table-stack {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+}
+
+.directory-table-section {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  min-height: 0;
+}
+
+.directory-table-section h3 {
+  margin: 0;
+  color: #fff3d2;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .directory-table-wrap {
   min-height: 0;
   overflow: auto;

@@ -65,6 +65,7 @@ CWD_INSTALL_COMMAND_TEMPLATES = (
 )
 CWD_INITIAL_REPORT_COMMAND_TEMPLATE = "__py_web_ssh_cwd_armed=1; " + CWD_REPORT_FUNCTION
 CWD_INITIAL_READY_COMMAND_TEMPLATE = "__py_web_ssh_cwd_armed=1; " + CWD_READY_FUNCTION
+CWD_REFRESH_LISTING_COMMAND_TEMPLATE = "__py_web_ssh_cwd_armed=1; " + CWD_LIST_FUNCTION + "; " + CWD_READY_FUNCTION
 CWD_INSTALL_COMMAND_TEMPLATE = "; ".join(CWD_INSTALL_COMMAND_TEMPLATES)
 
 
@@ -124,6 +125,7 @@ class TerminalSession:
         self._cwd_sync_waiting_for_change = False
         self._last_observed_working_directory = ""
         self._shell_prompt_ready = False
+        self._refresh_directory_listing_when_shell_ready = False
         self._terminal_filter_buffer = b""
         self._hidden_echo_filter_buffer = b""
         self._hidden_command_echoes: list[bytes] = []
@@ -265,6 +267,41 @@ class TerminalSession:
         if name not in file_names:
             raise ValueError("File entry is not available.")
         self._send_visible_terminal_input(f"rm -- {_posix_shell_quote(name)}\r".encode("utf-8"))
+        with self._lock:
+            self._refresh_directory_listing_when_shell_ready = True
+
+    def refresh_directory_listing_if_shell_ready(self) -> bool:
+        with self._lock:
+            can_refresh = (
+                self._cwd_sync_enabled
+                and self._shell_prompt_ready
+                and self.state == "connected"
+                and not self._hidden_terminal_transaction_active
+                and not self._hidden_terminal_transaction_closing
+            )
+            if can_refresh:
+                self._current_directory_listing = []
+                self._directory_listing_error = ""
+                self._shell_prompt_ready = False
+                listing_payload = self._directory_listing_payload(loading=True)
+                shell_ready_payload = {"type": "shell_ready", "ready": False}
+            else:
+                listing_payload = None
+                shell_ready_payload = None
+        if not can_refresh:
+            return False
+        self._broadcast(shell_ready_payload)
+        self._broadcast(listing_payload)
+        self._send_hidden_terminal_command(CWD_REFRESH_LISTING_COMMAND_TEMPLATE)
+        return True
+
+    def _refresh_pending_directory_listing_if_shell_ready(self) -> None:
+        with self._lock:
+            pending = self._refresh_directory_listing_when_shell_ready
+            if pending:
+                self._refresh_directory_listing_when_shell_ready = False
+        if pending:
+            self.refresh_directory_listing_if_shell_ready()
 
     def _send_visible_terminal_input(self, data: bytes) -> None:
         with self._channel_lock:
@@ -487,6 +524,7 @@ class TerminalSession:
             else:
                 self._set_shell_prompt_ready(True)
                 self._finish_hidden_terminal_transaction()
+                self._refresh_pending_directory_listing_if_shell_ready()
             pending = pending[end + len(CWD_OSC_SUFFIX) :]
 
         return self._remove_hidden_command_echoes(bytes(visible))
@@ -693,10 +731,13 @@ class TerminalSession:
         ready = bool(ready and self._cwd_sync_enabled and self.state == "connected")
         with self._lock:
             if self._shell_prompt_ready == ready:
-                return
-            self._shell_prompt_ready = ready
-            self.updated_at = datetime.now(timezone.utc)
-        self._broadcast({"type": "shell_ready", "ready": ready})
+                should_broadcast = False
+            else:
+                self._shell_prompt_ready = ready
+                self.updated_at = datetime.now(timezone.utc)
+                should_broadcast = True
+        if should_broadcast:
+            self._broadcast({"type": "shell_ready", "ready": ready})
 
     def _confirm_host_key(self, host_key: HostKeyInfo) -> bool:
         with self._host_key_lock:
