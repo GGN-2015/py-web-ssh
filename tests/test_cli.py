@@ -29,6 +29,8 @@ def test_cli_defaults_listen_on_all_interfaces_port_8022_and_default_branding() 
     assert args.subtitle is None
     assert args.launch_browser is False
     assert args.ban_lan is False
+    assert args.ban_dns is False
+    assert args.ban_ipv6 is False
 
 
 def test_cli_accepts_title_and_subtitle_arguments() -> None:
@@ -54,6 +56,13 @@ def test_cli_accepts_ban_lan_argument() -> None:
     args = build_arg_parser().parse_args(["--ban-lan"])
 
     assert args.ban_lan is True
+
+
+def test_cli_accepts_ban_dns_and_ban_ipv6_arguments() -> None:
+    args = build_arg_parser().parse_args(["--ban-dns", "--ban-ipv6"])
+
+    assert args.ban_dns is True
+    assert args.ban_ipv6 is True
 
 
 def test_python_package_empty_args_keep_original_defaults(monkeypatch) -> None:

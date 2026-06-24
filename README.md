@@ -20,7 +20,7 @@ A Web SSH client built with Python, FastAPI, and Paramiko. The frontend uses xte
 - Optional PIN gate: when the server starts with `--pin`, the web page requires the correct PIN first. After successful verification, the browser stores a salted hash cookie, and the backend protects HTTP APIs, the logs page, file endpoints, and WebSocket.
 - Custom branding: the default page title is `py-web-ssh`, and the default subtitle is `Web SSH Client`. They can be configured with `--title` and `--subtitle` at startup. The subtitle always shows the current package version on the right as `(py-web-ssh vx.y.z)`, and the title/subtitle do not change when the UI language changes.
 - Startup lock policy: supports `--lock-host`, `--lock-username`, `--lock-pwd`, and `--lock-private-key` to enforce the target host, username, password, and server-side private-key file from the server. The frontend locks or hides the matching controls, while the backend still validates and overrides sensitive fields. If no password, custom private key, or server-local key lookup is used, SSH connections try none authentication first, matching the empty-credential path used by `simple-ssh-copy`.
-- LAN target guard: start with `--ban-lan` to reject SSH targets entered as private or local IP literals. Hostnames are not DNS-resolved for this check, so a domain that resolves to a LAN IP is still allowed.
+- Target host guards: start with `--ban-lan`, `--ban-dns`, or `--ban-ipv6` to reject direct LAN IP targets, hostname targets, or IPv6 targets. The frontend blocks these submissions before creating a session, and the backend enforces the same policy.
 - English/Chinese UI: English is the default language. The web page and logs page support switching between English and Chinese, and the language choice is persisted in the `py_web_ssh_lang` cookie.
 - Browser client session: on first visit, the server assigns an independent browser session UUID and writes it to an HttpOnly cookie. It is separate from the SSH session UUID.
 - Left control panel: the Connection, Algorithms, Session, and Files sections are mutually exclusive collapsible panels. At most one section is expanded at a time, and all sections can also be collapsed.
@@ -86,13 +86,18 @@ py-web-ssh --lock-private-key C:\secrets\id_ed25519
 
 The values of `--lock-pwd` and `--lock-private-key` are used only on the server and are not sent to the browser through the config API. `--lock-private-key` points to a server-local file path, not a browser-uploaded file.
 
-Reject direct LAN IP target hosts:
+Restrict target host formats:
 
 ```bash
 py-web-ssh --ban-lan
+py-web-ssh --ban-dns
+py-web-ssh --ban-ipv6
+py-web-ssh --ban-dns --ban-ipv6
 ```
 
 `--ban-lan` only checks whether the submitted host is an IP literal. It blocks private or local IP literals such as `192.168.1.10` and `::1`, but it does not resolve hostnames, so `ssh.internal.example` remains allowed even if DNS points it to a LAN IP.
+`--ban-dns` allows only IP address literals, so `203.0.113.10` is allowed and `server.example.com` is rejected.
+`--ban-ipv6` rejects IPv6 address literals such as `2001:db8::1`; IPv4 literals and hostnames are still allowed unless another guard blocks them.
 
 The frontend loads xterm.js, the fit addon, and the serialize addon from jsDelivr by default. For offline intranet deployment, vendor these static assets into `webssh/static/` and replace the CDN URLs in `index.html`.
 
@@ -160,7 +165,7 @@ This project is designed by default for trusted intranet or local use. Private k
 - 可选 PIN 门禁：服务端传入 `--pin` 后，网页启动时必须先输入正确 PIN；验证成功后浏览器会保存加盐哈希 cookie，后端会保护 HTTP API、日志页面、文件接口和 WebSocket。
 - 可定制品牌：默认网页标题为 `py-web-ssh`，副标题为 `Web SSH Client`；启动时可用 `--title` 和 `--subtitle` 设置。副标题右侧始终显示当前包版本 `(py-web-ssh vx.y.z)`，且标题和副标题不会跟随语言切换。
 - 启动锁定策略：支持 `--lock-host`、`--lock-username`、`--lock-pwd`、`--lock-private-key`，可从服务端强制绑定目标主机、用户名、密码和服务端侧私钥文件。前端会锁定或隐藏对应控件，后端仍会校验并覆盖敏感字段。如果用户没有填写口令、没有上传自定义私钥，也没有启用服务端本机密钥查找，SSH 连接会优先尝试 none authentication，与 `simple-ssh-copy` 的空凭据路径保持一致。
-- 局域网目标限制：启动时传入 `--ban-lan` 后，会拒绝用户直接填写为私有或本地 IP 字面量的 SSH 目标。这个检查不会解析域名，所以域名即使解析到局域网 IP 也仍然允许访问。
+- 目标主机限制：启动时可传入 `--ban-lan`、`--ban-dns` 或 `--ban-ipv6`，分别拒绝直接填写局域网 IP、域名形式目标或 IPv6 目标。前端会在创建会话前拦截，后端也会执行同样的强制校验。
 - 中英双语：默认英文，网页和日志页都支持中英切换；语言选择会长期保存到 `py_web_ssh_lang` cookie。
 - 浏览器客户端 session：首次访问时服务端会分配独立的浏览器 session UUID，并写入 HttpOnly cookie；它与 SSH 会话 UUID 分离。
 - 左侧控制面板：连接、算法、会话、文件四个栏目改为互斥折叠面板，一次最多展开一个，也可以全部折叠。
@@ -226,13 +231,18 @@ py-web-ssh --lock-private-key C:\secrets\id_ed25519
 
 `--lock-pwd` 和 `--lock-private-key` 的值只在服务端使用，不会通过配置接口发送给浏览器。`--lock-private-key` 指向的是服务端本机文件路径，不是浏览器上传的文件。
 
-拒绝直接填写局域网 IP 作为 SSH 目标：
+限制 SSH 目标 host 的格式：
 
 ```bash
 py-web-ssh --ban-lan
+py-web-ssh --ban-dns
+py-web-ssh --ban-ipv6
+py-web-ssh --ban-dns --ban-ipv6
 ```
 
 `--ban-lan` 只判断提交的 host 是否是 IP 字面量。它会拦截 `192.168.1.10`、`::1` 这类私有或本地 IP，但不会解析域名，所以 `ssh.internal.example` 即使通过 DNS 指向局域网 IP，也会被允许。
+`--ban-dns` 只允许 IP 地址字面量，因此 `203.0.113.10` 会被允许，`server.example.com` 会被拒绝。
+`--ban-ipv6` 会拒绝 `2001:db8::1` 这类 IPv6 地址字面量；IPv4 字面量和域名仍会被允许，除非被其他限制同时拦截。
 
 前端默认从 jsDelivr 加载 xterm.js、fit addon 和 serialize addon。离线内网部署时，请把这些静态资源 vendoring 到 `webssh/static/` 并替换 `index.html` 里的 CDN 地址。
 

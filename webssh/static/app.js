@@ -71,6 +71,8 @@ const translations = {
     creatingSession: "Creating session...",
     createFailed: "Create failed",
     createSessionFailed: "Create session failed",
+    dnsHostBlocked: "Server policy only allows IP address targets.",
+    ipv6HostBlocked: "Server policy blocks IPv6 targets.",
     ready: "Ready",
     invalidPin: "Invalid PIN.",
     uploadNeedsInputs: "Upload requires a session UUID, remote path, and local file.",
@@ -138,6 +140,8 @@ const translations = {
     creatingSession: "创建会话...",
     createFailed: "创建失败",
     createSessionFailed: "创建会话失败",
+    dnsHostBlocked: "服务端策略只允许使用 IP 地址作为目标。",
+    ipv6HostBlocked: "服务端策略禁止使用 IPv6 目标。",
     ready: "就绪",
     invalidPin: "PIN 不正确。",
     uploadNeedsInputs: "上传需要会话 UUID、远端路径和本地文件。",
@@ -255,6 +259,12 @@ document.querySelector("#connect-form").addEventListener("submit", async (event)
     term: "xterm-256color",
     size: { cols: term.cols, rows: term.rows },
   };
+  const policyError = validateTargetHostPolicy(payload.host);
+  if (policyError) {
+    appendLogLine(policyError);
+    setStatus(t("createFailed"));
+    return;
+  }
 
   const response = await fetch("/api/sessions", {
     method: "POST",
@@ -760,6 +770,68 @@ function valueOf(selector) {
 
 function checked(selector) {
   return document.querySelector(selector).checked;
+}
+
+function validateTargetHostPolicy(host) {
+  const security = runtimeConfig.security || {};
+  const address = parseIpLiteral(host);
+  if (security.ban_dns && !address) {
+    return t("dnsHostBlocked");
+  }
+  if (security.ban_ipv6 && address && address.version === 6) {
+    return t("ipv6HostBlocked");
+  }
+  return "";
+}
+
+function parseIpLiteral(host) {
+  let value = String(host || "").trim();
+  if (value.startsWith("[") && value.endsWith("]")) {
+    value = value.slice(1, -1);
+  }
+  if (isIpv4Literal(value)) {
+    return { version: 4 };
+  }
+  if (isIpv6Literal(value)) {
+    return { version: 6 };
+  }
+  return null;
+}
+
+function isIpv4Literal(value) {
+  if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)) {
+    return false;
+  }
+  return value.split(".").every((part) => {
+    const number = Number(part);
+    return Number.isInteger(number) && number >= 0 && number <= 255;
+  });
+}
+
+function isIpv6Literal(value) {
+  if (!value.includes(":")) {
+    return false;
+  }
+  let candidate = value;
+  const possibleIpv4 = candidate.slice(candidate.lastIndexOf(":") + 1);
+  if (possibleIpv4.includes(".")) {
+    if (!isIpv4Literal(possibleIpv4)) {
+      return false;
+    }
+    candidate = `${candidate.slice(0, candidate.lastIndexOf(":"))}:0:0`;
+  }
+  if (/[^0-9A-Fa-f:]/.test(candidate)) {
+    return false;
+  }
+  const halves = candidate.split("::");
+  if (halves.length > 2) {
+    return false;
+  }
+  const groups = candidate.split(":").filter((group) => group.length > 0);
+  if (groups.length > 8 || groups.some((group) => group.length > 4)) {
+    return false;
+  }
+  return halves.length === 2 ? groups.length < 8 : groups.length === 8;
 }
 
 function uploadProbeSizeBytes() {

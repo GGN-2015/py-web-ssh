@@ -36,6 +36,8 @@ class RuntimeConfig:
     lock_password: str | None = None
     lock_private_key_path: Path | None = None
     ban_lan: bool = False
+    ban_dns: bool = False
+    ban_ipv6: bool = False
 
     @property
     def lock_password_enabled(self) -> bool:
@@ -58,7 +60,11 @@ class RuntimeConfig:
                 "password": {"enabled": self.lock_password_enabled},
                 "private_key": {"enabled": self.lock_private_key_enabled},
             },
-            "security": {"ban_lan": self.ban_lan},
+            "security": {
+                "ban_lan": self.ban_lan,
+                "ban_dns": self.ban_dns,
+                "ban_ipv6": self.ban_ipv6,
+            },
         }
 
     def apply_to_connect_request(self, incoming: ConnectRequest) -> ConnectRequest:
@@ -76,7 +82,15 @@ class RuntimeConfig:
                 raise HTTPException(status_code=403, detail="Username is locked by the server.")
             data["username"] = self.lock_username
 
-        if self.ban_lan and _is_lan_ip_literal(str(data.get("host") or "")):
+        target_host = str(data.get("host") or "")
+        target_address = _parse_ip_literal(target_host)
+        if self.ban_dns and target_address is None:
+            raise HTTPException(status_code=403, detail="DNS hostnames are blocked by the server.")
+
+        if self.ban_ipv6 and isinstance(target_address, ipaddress.IPv6Address):
+            raise HTTPException(status_code=403, detail="IPv6 targets are blocked by the server.")
+
+        if self.ban_lan and _is_lan_ip_address(target_address):
             raise HTTPException(status_code=403, detail="LAN IP targets are blocked by the server.")
 
         if self.lock_password is not None:
@@ -100,6 +114,8 @@ def configure_runtime_locks(
     lock_password: str | None = None,
     lock_private_key: str | None = None,
     ban_lan: bool = False,
+    ban_dns: bool = False,
+    ban_ipv6: bool = False,
 ) -> None:
     global runtime_config
     key_path = Path(lock_private_key).expanduser().resolve() if lock_private_key else None
@@ -113,6 +129,8 @@ def configure_runtime_locks(
         lock_password=lock_password if lock_password is not None else None,
         lock_private_key_path=key_path,
         ban_lan=ban_lan,
+        ban_dns=ban_dns,
+        ban_ipv6=ban_ipv6,
     )
 
 
@@ -161,6 +179,16 @@ def add_runtime_lock_arguments(parser: argparse.ArgumentParser) -> None:
             "Hostnames are not resolved for this check."
         ),
     )
+    parser.add_argument(
+        "--ban-dns",
+        action="store_true",
+        help="Reject SSH targets entered as hostnames; only IP address literals are allowed.",
+    )
+    parser.add_argument(
+        "--ban-ipv6",
+        action="store_true",
+        help="Reject SSH targets entered as IPv6 address literals.",
+    )
 
 
 def _read_locked_private_key(path: Path) -> str:
@@ -185,11 +213,24 @@ def _blank_to_default(value: str | None, default: str) -> str:
 
 
 def _is_lan_ip_literal(host: str) -> bool:
+    return _is_lan_ip_address(_parse_ip_literal(host))
+
+
+def _parse_ip_literal(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     value = host.strip()
     if value.startswith("[") and value.endswith("]"):
         value = value[1:-1]
     try:
-        address = ipaddress.ip_address(value)
+        return ipaddress.ip_address(value)
     except ValueError:
+        return None
+
+
+def _is_lan_ip_address(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address | None,
+) -> bool:
+    if address is None:
         return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return _is_lan_ip_address(address.ipv4_mapped)
     return any(address in network for network in LAN_IP_NETWORKS)

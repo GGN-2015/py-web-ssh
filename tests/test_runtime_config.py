@@ -200,6 +200,74 @@ def test_ban_lan_allows_public_ip_targets(monkeypatch) -> None:
     assert response.status_code == 200
 
 
+def test_ban_dns_rejects_domain_targets(monkeypatch) -> None:
+    configure_runtime_locks(ban_dns=True)
+    monkeypatch.setattr(app_module, "sessions", NoStartSessionManager(autostart_reaper=False))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/sessions",
+        json={"host": "server.example.com", "username": "root"},
+    )
+
+    assert response.status_code == 403
+    assert "DNS hostnames" in response.json()["detail"]
+
+
+def test_ban_dns_allows_ip_address_targets(monkeypatch) -> None:
+    configure_runtime_locks(ban_dns=True)
+    manager = NoStartSessionManager(autostart_reaper=False)
+    monkeypatch.setattr(app_module, "sessions", manager)
+    client = TestClient(app)
+
+    for host in ["203.0.113.10", "2001:db8::1", "[2001:db8::1]"]:
+        response = client.post(
+            "/api/sessions",
+            json={"host": host, "username": "root"},
+        )
+
+        assert response.status_code == 200
+
+
+def test_ban_ipv6_rejects_ipv6_targets(monkeypatch) -> None:
+    configure_runtime_locks(ban_ipv6=True)
+    monkeypatch.setattr(app_module, "sessions", NoStartSessionManager(autostart_reaper=False))
+    client = TestClient(app)
+
+    for host in ["2001:db8::1", "[2001:db8::1]", "::ffff:192.0.2.10"]:
+        response = client.post(
+            "/api/sessions",
+            json={"host": host, "username": "root"},
+        )
+
+        assert response.status_code == 403
+        assert "IPv6 targets" in response.json()["detail"]
+
+
+def test_ban_ipv6_allows_ipv4_and_domain_targets(monkeypatch) -> None:
+    configure_runtime_locks(ban_ipv6=True)
+    manager = NoStartSessionManager(autostart_reaper=False)
+    monkeypatch.setattr(app_module, "sessions", manager)
+    client = TestClient(app)
+
+    for host in ["203.0.113.10", "server.example.com"]:
+        response = client.post(
+            "/api/sessions",
+            json={"host": host, "username": "root"},
+        )
+
+        assert response.status_code == 200
+
+
+def test_public_config_exposes_security_policies() -> None:
+    configure_runtime_locks(ban_lan=True, ban_dns=True, ban_ipv6=True)
+    client = TestClient(app)
+
+    payload = client.get("/api/config").json()
+
+    assert payload["security"] == {"ban_lan": True, "ban_dns": True, "ban_ipv6": True}
+
+
 def test_algorithm_endpoint_lists_supported_runtime_algorithms() -> None:
     client = TestClient(app)
 

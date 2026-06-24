@@ -126,6 +126,22 @@ def test_upload_form_exposes_initial_probe_size_control() -> None:
     assert 'uploadProbeUnitSelect.value = "b";' in script
 
 
+def test_frontend_enforces_target_host_security_policies_before_submit() -> None:
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert "function validateTargetHostPolicy(host)" in script
+    assert "const security = runtimeConfig.security || {};" in script
+    assert "security.ban_dns && !address" in script
+    assert "security.ban_ipv6 && address && address.version === 6" in script
+    assert "function parseIpLiteral(host)" in script
+    assert "function isIpv4Literal(value)" in script
+    assert "function isIpv6Literal(value)" in script
+    assert "const policyError = validateTargetHostPolicy(payload.host);" in script
+    assert "appendLogLine(policyError);" in script
+    assert 'return t("dnsHostBlocked");' in script
+    assert 'return t("ipv6HostBlocked");' in script
+
+
 def test_frontend_no_longer_exposes_agent_or_known_hosts_controls() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")
