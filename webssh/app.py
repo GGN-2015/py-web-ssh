@@ -190,7 +190,7 @@ def upload(
     if tracker is None:
         tracker = transfers.create_upload(total_bytes or _content_length(file), remote_path, session_id)
     try:
-        method, transferred, final_remote_path = upload_file_via_ssh(
+        method, transferred, final_remote_path, upload_block_size_bytes = upload_file_via_ssh(
             session.config,
             file.file,
             remote_path,
@@ -221,6 +221,7 @@ def upload(
         remote_path=final_remote_path,
         message=message,
         transfer_id=tracker.id,
+        upload_block_size_bytes=upload_block_size_bytes,
     )
 
 

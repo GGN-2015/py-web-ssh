@@ -467,6 +467,7 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
     const xhrUpload = uploadWithXhr(`/api/sessions/${activeSessionId}/files/upload`, form, uploadState);
     uploadState.xhr = xhrUpload.xhr;
     const result = await xhrUpload.promise;
+    applySuccessfulUploadBlockSize(result);
     showUploadProgress(result.bytes_transferred, file.size, t("uploadComplete"), uploadState);
     setUploadActionState("complete");
     appendLogLine(`${t("uploadComplete")}: ${JSON.stringify(result)}`);
@@ -855,6 +856,14 @@ function setUploadProbeSizeFromBytes(bytes) {
   const unit = UPLOAD_PROBE_UNITS_DESC.find((candidate) => safeBytes % UPLOAD_PROBE_UNIT_BYTES[candidate] === 0) || "b";
   uploadProbeSizeInput.value = String(safeBytes / UPLOAD_PROBE_UNIT_BYTES[unit]);
   uploadProbeUnitSelect.value = unit;
+}
+
+function applySuccessfulUploadBlockSize(result) {
+  const bytes = Number(result && result.upload_block_size_bytes);
+  if (!Number.isFinite(bytes) || bytes < 1) {
+    return;
+  }
+  setUploadProbeSizeFromBytes(bytes);
 }
 
 async function loadAlgorithms() {

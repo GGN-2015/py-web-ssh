@@ -140,6 +140,9 @@ def test_upload_form_exposes_initial_probe_size_control() -> None:
     assert "applyUploadDefaults(runtimeConfig);" in script
     assert "const UPLOAD_PROBE_UNITS_DESC = [\"tb\", \"gb\", \"mb\", \"kb\", \"b\"];" in script
     assert "setUploadProbeSizeFromBytes(bytes);" in script
+    assert "function applySuccessfulUploadBlockSize(result)" in script
+    assert "applySuccessfulUploadBlockSize(result);" in script
+    assert "result.upload_block_size_bytes" in script
     assert 'uploadProbeSizeInput.value = String(MIN_UPLOAD_PROBE_BYTES);' in script
     assert 'uploadProbeUnitSelect.value = "b";' in script
 

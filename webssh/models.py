@@ -74,3 +74,4 @@ class FileTransferResponse(BaseModel):
     remote_path: str
     message: str
     transfer_id: str | None = None
+    upload_block_size_bytes: int | None = None

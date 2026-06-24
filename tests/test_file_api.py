@@ -57,7 +57,7 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
             progress(len(captured["source"]))
         if log:
             log("info", "fake upload log", None)
-        return "shell", len(captured["source"]), "/tmp/example.txt"
+        return "shell", len(captured["source"]), "/tmp/example.txt", 1536
 
     monkeypatch.setattr(app_module, "upload_file_via_ssh", fake_upload)
 
@@ -85,6 +85,7 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
     assert captured["source"] == b"hello"
     assert response.json()["method"] == "shell"
     assert response.json()["remote_path"] == "/tmp/example.txt"
+    assert response.json()["upload_block_size_bytes"] == 1536
 
 
 def test_upload_requires_confirmed_host_key(monkeypatch) -> None:
@@ -127,7 +128,7 @@ def test_upload_accepts_positive_probe_size_and_applies_minimum(monkeypatch) -> 
     ):
         captured["requested_command_size"] = requested_command_size
         payload = source.read()
-        return "shell", len(payload), remote_path
+        return "shell", len(payload), remote_path, requested_command_size
 
     monkeypatch.setattr(app_module, "upload_file_via_ssh", fake_upload)
 
@@ -143,6 +144,7 @@ def test_upload_accepts_positive_probe_size_and_applies_minimum(monkeypatch) -> 
 
     assert response.status_code == 200
     assert captured["requested_command_size"] == 64
+    assert response.json()["upload_block_size_bytes"] == 64
 
 
 def test_upload_uses_runtime_block_size_when_probe_size_is_omitted(monkeypatch) -> None:
@@ -169,7 +171,7 @@ def test_upload_uses_runtime_block_size_when_probe_size_is_omitted(monkeypatch) 
     ):
         captured["requested_command_size"] = requested_command_size
         payload = source.read()
-        return "shell", len(payload), remote_path
+        return "shell", len(payload), remote_path, requested_command_size
 
     monkeypatch.setattr(app_module, "upload_file_via_ssh", fake_upload)
 
@@ -184,6 +186,7 @@ def test_upload_uses_runtime_block_size_when_probe_size_is_omitted(monkeypatch) 
 
     assert response.status_code == 200
     assert captured["requested_command_size"] == 12 * 1024
+    assert response.json()["upload_block_size_bytes"] == 12 * 1024
 
 
 def test_upload_rejects_non_positive_probe_size(monkeypatch) -> None:

@@ -54,7 +54,7 @@ def upload_file_via_ssh(
     cancel_event: threading.Event | None = None,
     progress: ProgressCallback | None = None,
     log: TransferLogCallback | None = None,
-) -> tuple[str, int, str]:
+) -> tuple[str, int, str, int]:
     """Upload using only bounded SSH exec commands and POSIX-ish shell commands.
 
     This intentionally does not use SFTP or SCP. It follows the simple-ssh-copy
@@ -123,7 +123,7 @@ def upload_file_via_ssh(
 
     if size is not None and transferred != size:
         raise FileTransferError(f"Uploaded {transferred} bytes, expected {size} bytes.")
-    return "shell", transferred, target.final_path
+    return "shell", transferred, target.final_path, command_size
 
 
 def _connect_transfer_client(config: ConnectRequest, expected_host_key: HostKeyInfo):

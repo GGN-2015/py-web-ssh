@@ -64,7 +64,7 @@ Returns public, non-sensitive runtime configuration:
   "branding": {
     "title": "py-web-ssh",
     "subtitle": "Web SSH Client",
-    "version": "0.1.43"
+    "version": "0.1.44"
   },
   "locks": {
     "host": {"enabled": false, "value": null},
@@ -210,7 +210,8 @@ Response:
   "bytes_transferred": 1048576,
   "remote_path": "/tmp/file.bin",
   "message": "Uploaded 1048576 bytes to /tmp/file.bin using shell.",
-  "transfer_id": "uuid"
+  "transfer_id": "uuid",
+  "upload_block_size_bytes": 1048576
 }
 ```
 
