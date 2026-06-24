@@ -108,6 +108,19 @@ def test_upload_progress_displays_eta() -> None:
     assert "${eta}" in script
 
 
+def test_upload_form_exposes_initial_probe_size_control() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'id="upload-probe-size"' in markup
+    assert 'id="upload-probe-unit"' in markup
+    assert '<option value="mb" selected>MB</option>' in markup
+    assert '<option value="kb">KB</option>' in markup
+    assert '<option value="b">B</option>' in markup
+    assert 'form.append("upload_command_size_bytes", String(uploadProbeSizeBytes()));' in script
+    assert "function uploadProbeSizeBytes()" in script
+
+
 def test_frontend_no_longer_exposes_agent_or_known_hosts_controls() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")

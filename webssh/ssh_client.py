@@ -328,6 +328,10 @@ def _authenticate(transport: paramiko.Transport, config: ConnectRequest, log: Lo
     username = config.username
     errors: list[str] = []
 
+    if _should_try_none_auth_first(config):
+        if _try_none_auth(transport, username, log, errors):
+            return
+
     if config.private_key:
         try:
             pkey = _load_private_key(config.private_key, config.private_key_passphrase)
@@ -369,17 +373,30 @@ def _authenticate(transport: paramiko.Transport, config: ConnectRequest, log: Lo
         if transport.is_authenticated():
             return
 
+    if not _should_try_none_auth_first(config) and _try_none_auth(transport, username, log, errors):
+        return
+
+    joined = "\n".join(errors) if errors else "No authentication method was accepted."
+    raise paramiko.AuthenticationException(f"SSH authentication failed:\n{joined}")
+
+
+def _should_try_none_auth_first(config: ConnectRequest) -> bool:
+    return not config.password and not config.private_key and not config.look_for_keys
+
+
+def _try_none_auth(
+    transport: paramiko.Transport,
+    username: str,
+    log: LogCallback,
+    errors: list[str],
+) -> bool:
     try:
         log("info", "Trying none authentication.", None)
         transport.auth_none(username)
     except Exception as exc:
         errors.append(f"none: {exc}")
         log("debug", f"None authentication failed: {exc}", None)
-    if transport.is_authenticated():
-        return
-
-    joined = "\n".join(errors) if errors else "No authentication method was accepted."
-    raise paramiko.AuthenticationException(f"SSH authentication failed:\n{joined}")
+    return transport.is_authenticated()
 
 
 def _load_private_key(text: str, passphrase: str | None) -> paramiko.PKey:

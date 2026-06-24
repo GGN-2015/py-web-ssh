@@ -17,6 +17,8 @@ from .auth import add_pin_argument, configure_pin
 from .client_session import ensure_client_session_cookie
 from .files import (
     FileTransferCancelled,
+    MIN_UPLOAD_COMMAND_BYTES,
+    REQUESTED_UPLOAD_COMMAND_BYTES,
     download_file_via_ssh,
     filename_for_download,
     upload_file_via_ssh,
@@ -163,6 +165,7 @@ def upload(
     file: Annotated[UploadFile, File()],
     transfer_id: Annotated[str | None, Form()] = None,
     total_bytes: Annotated[int | None, Form()] = None,
+    upload_command_size_bytes: Annotated[int | None, Form()] = None,
 ) -> FileTransferResponse:
     session = _require_session(session_id)
     expected_host_key = session.confirmed_host_key
@@ -174,6 +177,7 @@ def upload(
     tracker = transfers.get(transfer_id) if transfer_id else None
     if transfer_id and tracker is None:
         raise HTTPException(status_code=404, detail="Transfer not found.")
+    requested_command_size = _normalize_upload_command_size(upload_command_size_bytes)
     if tracker is None:
         tracker = transfers.create_upload(total_bytes or _content_length(file), remote_path)
     try:
@@ -183,6 +187,7 @@ def upload(
             remote_path,
             total_bytes or _content_length(file),
             expected_host_key,
+            requested_command_size=requested_command_size,
             original_filename=file.filename,
             cancel_event=tracker.cancel_event,
             progress=tracker.update_progress,
@@ -361,6 +366,17 @@ def _content_length(upload: UploadFile) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _normalize_upload_command_size(value: int | None) -> int:
+    if value is None:
+        return REQUESTED_UPLOAD_COMMAND_BYTES
+    if value < 1:
+        raise HTTPException(
+            status_code=422,
+            detail="upload_command_size_bytes must be a positive integer.",
+        )
+    return max(value, MIN_UPLOAD_COMMAND_BYTES)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

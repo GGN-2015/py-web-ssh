@@ -61,7 +61,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -86,7 +87,8 @@ button.primary {
   font-weight: 700;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-height: 36px;
   border: 1px solid var(--line);
@@ -98,6 +100,10 @@ input {
 
 input[type="file"] {
   padding: 6px;
+}
+
+select {
+  cursor: pointer;
 }
 
 input.locked {
@@ -256,6 +262,12 @@ label {
 .checks input {
   width: auto;
   min-height: auto;
+}
+
+.unit-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 8px;
 }
 
 .algorithm-groups {

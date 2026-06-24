@@ -51,6 +51,7 @@ const translations = {
     openLogs: "Open full logs",
     uploadRemotePath: "Upload remote path",
     localFile: "Local file",
+    uploadProbeSize: "Initial probe size",
     upload: "Upload",
     waitingUpload: "Waiting for upload",
     cancelUpload: "Cancel upload",
@@ -117,6 +118,7 @@ const translations = {
     openLogs: "打开完整日志",
     uploadRemotePath: "上传到远端路径",
     localFile: "本地文件",
+    uploadProbeSize: "初始试探大小",
     upload: "上传",
     waitingUpload: "等待上传",
     cancelUpload: "取消上传",
@@ -310,6 +312,7 @@ document.querySelector("#upload-form").addEventListener("submit", async (event) 
   const form = new FormData();
   form.append("remote_path", remotePath);
   form.append("total_bytes", String(file.size));
+  form.append("upload_command_size_bytes", String(uploadProbeSizeBytes()));
   form.append("file", file);
   const uploadState = {
     xhr: null,
@@ -747,6 +750,17 @@ function valueOf(selector) {
 
 function checked(selector) {
   return document.querySelector(selector).checked;
+}
+
+function uploadProbeSizeBytes() {
+  const value = Number.parseInt(valueOf("#upload-probe-size"), 10);
+  const units = {
+    mb: 1024 * 1024,
+    kb: 1024,
+    b: 1,
+  };
+  const unit = document.querySelector("#upload-probe-unit").value;
+  return Math.max(1, Number.isFinite(value) ? value : 1) * (units[unit] || units.mb);
 }
 
 function filenameFromResponse(response, fallbackPath) {

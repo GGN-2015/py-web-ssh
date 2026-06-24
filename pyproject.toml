@@ -1,6 +1,6 @@
 [project]
 name = "py-web-ssh"
-version = "0.1.17"
+version = "0.1.19"
 description = "A Python web SSH client with xterm.js, reconnectable sessions, logs, and file transfer."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,6 +23,7 @@ build-backend = "poetry.core.masonry.api"
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2.0",
+    "httpx2>=2.4.0",
     "ruff>=0.5.0",
 ]
 

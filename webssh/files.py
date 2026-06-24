@@ -49,6 +49,7 @@ def upload_file_via_ssh(
     remote_path: str,
     size: int | None,
     expected_host_key: HostKeyInfo,
+    requested_command_size: int = REQUESTED_UPLOAD_COMMAND_BYTES,
     original_filename: str | None = None,
     cancel_event: threading.Event | None = None,
     progress: ProgressCallback | None = None,
@@ -62,7 +63,12 @@ def upload_file_via_ssh(
     succeeds.
     """
 
-    command_size = probe_upload_command_size(config, expected_host_key, log)
+    command_size = probe_upload_command_size(
+        config,
+        expected_host_key,
+        log,
+        requested_size=requested_command_size,
+    )
     connected = _connect_transfer_client(config, expected_host_key)
     client = connected.client
     transferred = 0

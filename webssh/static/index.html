@@ -139,6 +139,17 @@
                 <span data-i18n="localFile">Local file</span>
                 <input id="upload-file" type="file" />
               </label>
+              <label>
+                <span data-i18n="uploadProbeSize">Initial probe size</span>
+                <div class="unit-input">
+                  <input id="upload-probe-size" type="number" min="1" step="1" value="1" inputmode="numeric" required />
+                  <select id="upload-probe-unit">
+                    <option value="mb" selected>MB</option>
+                    <option value="kb">KB</option>
+                    <option value="b">B</option>
+                  </select>
+                </div>
+              </label>
               <button type="submit" data-i18n="upload">Upload</button>
             </form>
             <div id="upload-progress" class="transfer-progress hidden">

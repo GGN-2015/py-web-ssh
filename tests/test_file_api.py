@@ -35,6 +35,7 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
         remote_path,
         size,
         expected_host_key,
+        requested_command_size,
         original_filename=None,
         cancel_event=None,
         progress=None,
@@ -45,6 +46,7 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
         captured["remote_path"] = remote_path
         captured["size"] = size
         captured["expected_host_key"] = expected_host_key
+        captured["requested_command_size"] = requested_command_size
         captured["original_filename"] = original_filename
         if progress:
             progress(len(captured["source"]))
@@ -61,13 +63,19 @@ def test_upload_uses_session_config_not_interactive_ssh_client(monkeypatch) -> N
     transfer_id = task.json()["transfer_id"]
     response = client.post(
         f"/api/sessions/{session.id}/files/upload",
-        data={"remote_path": "/tmp/example.txt", "transfer_id": transfer_id, "total_bytes": "5"},
+        data={
+            "remote_path": "/tmp/example.txt",
+            "transfer_id": transfer_id,
+            "total_bytes": "5",
+            "upload_command_size_bytes": "2048",
+        },
         files={"file": ("example.txt", BytesIO(b"hello"), "text/plain")},
     )
 
     assert response.status_code == 200
     assert captured["config"] is session.config
     assert captured["expected_host_key"] is host_key
+    assert captured["requested_command_size"] == 2048
     assert captured["original_filename"] == "example.txt"
     assert captured["source"] == b"hello"
     assert response.json()["method"] == "shell"
@@ -89,6 +97,69 @@ def test_upload_requires_confirmed_host_key(monkeypatch) -> None:
 
     assert response.status_code == 409
     assert "host key has not been confirmed" in response.json()["detail"]
+
+
+def test_upload_accepts_positive_probe_size_and_applies_minimum(monkeypatch) -> None:
+    client = TestClient(app)
+    manager = SessionManager(autostart_reaper=False)
+    session = TerminalSession(ConnectRequest(host="example.com", username="root"))
+    manager._sessions[session.id] = session
+    session._confirmed_host_key = fake_host_key()
+    monkeypatch.setattr(app_module, "sessions", manager)
+    captured: dict[str, object] = {}
+
+    def fake_upload(
+        config,
+        source,
+        remote_path,
+        size,
+        expected_host_key,
+        requested_command_size,
+        original_filename=None,
+        cancel_event=None,
+        progress=None,
+        log=None,
+    ):
+        captured["requested_command_size"] = requested_command_size
+        payload = source.read()
+        return "shell", len(payload), remote_path
+
+    monkeypatch.setattr(app_module, "upload_file_via_ssh", fake_upload)
+
+    response = client.post(
+        f"/api/sessions/{session.id}/files/upload",
+        data={
+            "remote_path": "/tmp/example.txt",
+            "total_bytes": "5",
+            "upload_command_size_bytes": "1",
+        },
+        files={"file": ("example.txt", BytesIO(b"hello"), "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert captured["requested_command_size"] == 64
+
+
+def test_upload_rejects_non_positive_probe_size(monkeypatch) -> None:
+    client = TestClient(app)
+    manager = SessionManager(autostart_reaper=False)
+    session = TerminalSession(ConnectRequest(host="example.com", username="root"))
+    manager._sessions[session.id] = session
+    session._confirmed_host_key = fake_host_key()
+    monkeypatch.setattr(app_module, "sessions", manager)
+
+    response = client.post(
+        f"/api/sessions/{session.id}/files/upload",
+        data={
+            "remote_path": "/tmp/example.txt",
+            "total_bytes": "5",
+            "upload_command_size_bytes": "0",
+        },
+        files={"file": ("example.txt", BytesIO(b"hello"), "text/plain")},
+    )
+
+    assert response.status_code == 422
+    assert "positive integer" in response.json()["detail"]
 
 
 def test_create_upload_task_requires_confirmed_host_key(monkeypatch) -> None:

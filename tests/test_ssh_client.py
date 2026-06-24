@@ -4,11 +4,13 @@ import paramiko
 
 from webssh.ssh_client import (
     HostKeyInfo,
+    _authenticate,
     _prepare_security_options,
     get_supported_algorithms,
     supported_algorithms_payload,
     validate_disabled_algorithms,
 )
+from webssh.models import ConnectRequest
 
 
 def test_ssh_client_does_not_use_agent_or_known_hosts() -> None:
@@ -86,3 +88,36 @@ def test_validate_disabled_algorithms_rejects_unknown_values() -> None:
         assert "Unsupported SSH algorithm selections" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+class FakeAuthTransport:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.authenticated = False
+
+    def auth_none(self, username: str) -> None:
+        self.calls.append(f"none:{username}")
+        self.authenticated = True
+
+    def auth_password(self, username: str, password: str, fallback: bool = True) -> None:
+        self.calls.append(f"password:{username}:{password}:{fallback}")
+
+    def auth_interactive(self, username: str, handler) -> None:
+        self.calls.append(f"interactive:{username}")
+
+    def is_authenticated(self) -> bool:
+        return self.authenticated
+
+
+def test_empty_credentials_try_none_auth_first_like_simple_ssh_copy() -> None:
+    transport = FakeAuthTransport()
+    logs: list[tuple[str, str, str | None]] = []
+
+    _authenticate(
+        transport,  # type: ignore[arg-type]
+        ConnectRequest(host="example.com", username="root"),
+        lambda level, message, details: logs.append((level, message, details)),
+    )
+
+    assert transport.calls == ["none:root"]
+    assert any(message == "Trying none authentication." for _level, message, _details in logs)
