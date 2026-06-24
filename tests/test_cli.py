@@ -9,6 +9,7 @@ from webssh.app import (
     _browser_launch_url,
     _effective_cli_args,
     _install_browser_launch_hook,
+    _run_uvicorn_server,
     build_arg_parser,
 )
 import webssh.app as app_module
@@ -161,6 +162,14 @@ def test_browser_launch_hook_does_not_fail_server_when_browser_open_fails() -> N
     assert server.started is True
 
 
+def test_uvicorn_keyboard_interrupt_is_treated_as_clean_shutdown() -> None:
+    server = KeyboardInterruptServer()
+
+    _run_uvicorn_server(server)
+
+    assert server.run_called is True
+
+
 class FakeSocket:
     def __init__(self, address: tuple[str, int]) -> None:
         self.address = address
@@ -186,3 +195,12 @@ class FakeServer:
 
     async def startup(self) -> None:
         self.started = self.started_after_startup
+
+
+class KeyboardInterruptServer:
+    def __init__(self) -> None:
+        self.run_called = False
+
+    def run(self, sockets=None) -> None:
+        self.run_called = True
+        raise KeyboardInterrupt

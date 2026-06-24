@@ -452,7 +452,7 @@ def run_server(
     if launch_browser:
         _install_browser_launch_hook(server, host, bind_port)
     try:
-        server.run(sockets=sockets)
+        _run_uvicorn_server(server, sockets=sockets)
     finally:
         if sockets is not None:
             for sock in sockets:
@@ -460,6 +460,13 @@ def run_server(
                     sock.close()
                 except OSError:
                     pass
+
+
+def _run_uvicorn_server(server, sockets=None) -> None:
+    try:
+        server.run(sockets=sockets)
+    except KeyboardInterrupt:
+        return
 
 
 def _bind_auto_port_sockets(host: str, start_port: int) -> tuple[list[socket.socket], int]:
