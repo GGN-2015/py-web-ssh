@@ -497,6 +497,64 @@ def test_enter_parent_directory_sends_visible_cd_dot_dot() -> None:
     assert session.replay_payload()["shell_ready"] is False
 
 
+def test_delete_file_requires_shell_prompt_ready() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = False
+    session._current_directory_listing = [{"name": "old.log", "type": "file"}]
+
+    try:
+        session.delete_file("old.log")
+    except RuntimeError as exc:
+        assert "shell prompt is not ready" in str(exc).lower()
+    else:
+        raise AssertionError("Expected RuntimeError")
+
+
+def test_delete_file_rejects_directory_entries() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_directory_listing = [{"name": "src", "type": "directory"}]
+
+    try:
+        session.delete_file("src")
+    except ValueError as exc:
+        assert "file entry" in str(exc).lower()
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_delete_file_sends_visible_rm_for_file_entry() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_directory_listing = [{"name": "it'works.log", "type": "file"}]
+
+    session.delete_file("it'works.log")
+
+    assert channel.sent == [b"rm -- 'it'\"'\"'works.log'\r"]
+    assert session.replay_payload()["shell_ready"] is False
+
+
 def test_posix_cwd_monitor_does_not_override_cd_function() -> None:
     assert "PS1=" in CWD_INSTALL_COMMAND_TEMPLATE
     assert "PS2=" in CWD_INSTALL_COMMAND_TEMPLATE

@@ -251,6 +251,21 @@ class TerminalSession:
             raise ValueError("Current directory has no parent directory.")
         self._send_visible_terminal_input(b"cd ..\r")
 
+    def delete_file(self, file_name: str) -> None:
+        name = _valid_directory_entry_name(file_name)
+        with self._lock:
+            shell_ready = self._cwd_sync_enabled and self._shell_prompt_ready
+            file_names = {
+                str(entry.get("name", ""))
+                for entry in self._current_directory_listing
+                if entry.get("type") != "directory"
+            }
+        if not shell_ready:
+            raise RuntimeError("The remote shell prompt is not ready.")
+        if name not in file_names:
+            raise ValueError("File entry is not available.")
+        self._send_visible_terminal_input(f"rm -- {_posix_shell_quote(name)}\r".encode("utf-8"))
+
     def _send_visible_terminal_input(self, data: bytes) -> None:
         with self._channel_lock:
             if self._channel is None or self.state != "connected":

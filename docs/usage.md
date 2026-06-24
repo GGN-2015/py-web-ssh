@@ -146,6 +146,8 @@ When `CWD Sync` is unchecked, the backend stops reporting CWD updates and the re
 
 The upload path defaults follow the synced current working directory when CWD Sync is active.
 
+The terminal-side Directory panel uses the same CWD Sync listing. Regular files show `Download` and `Delete`; `Delete` opens an in-app confirmation dialog and, after confirmation, sends a visible `rm -- 'file-name'` command to the shell. Directory entries show `Enter Dir`, which sends a visible `cd 'directory-name'` command. `UP`, `Enter Dir`, and `Delete` are enabled only when the backend has confirmed that the remote session is back at a shell prompt, so they are disabled while another terminal program is active or while the user is typing a command.
+
 ## Static Assets
 
 The frontend loads xterm.js, the fit addon, and the serialize addon from jsDelivr by default. For offline intranet deployment, vendor those assets into `webssh/static/` and update the CDN URLs in `webssh/static/index.html`.

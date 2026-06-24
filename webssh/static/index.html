@@ -239,6 +239,17 @@
       </section>
     </main>
 
+    <div id="confirm-dialog" class="confirm-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
+      <div class="confirm-dialog-box">
+        <h2 id="confirm-dialog-title"></h2>
+        <p id="confirm-dialog-message"></p>
+        <div class="confirm-dialog-actions">
+          <button id="confirm-dialog-cancel" type="button" data-i18n="cancel">Cancel</button>
+          <button id="confirm-dialog-confirm" class="danger" type="button" data-i18n="confirmDelete">Delete</button>
+        </div>
+      </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-serialize@0.13.0/lib/addon-serialize.min.js"></script>

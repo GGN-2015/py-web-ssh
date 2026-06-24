@@ -64,7 +64,7 @@ Returns public, non-sensitive runtime configuration:
   "branding": {
     "title": "py-web-ssh",
     "subtitle": "Web SSH Client",
-    "version": "0.1.44"
+    "version": "0.1.45"
   },
   "locks": {
     "host": {"enabled": false, "value": null},
@@ -286,6 +286,8 @@ Server-to-browser messages:
 - `log`: `{ "type": "log", "entry": LogEntry }`
 - `cwd`: `{ "type": "cwd", "cwd": "/path" }`
 - `cwd_sync`: `{ "type": "cwd_sync", "enabled": true }`
+- `directory_listing`: `{ "type": "directory_listing", "cwd": "/path", "entries": [], "error": "", "loading": false }`
+- `shell_ready`: `{ "type": "shell_ready", "ready": true }`
 
 Browser-to-server messages:
 
@@ -293,6 +295,9 @@ Browser-to-server messages:
 - `resize`: `{ "type": "resize", "cols": 120, "rows": 40 }`
 - `snapshot`: `{ "type": "snapshot", "seq": 1234, "data": "base64 xterm serialize snapshot" }`
 - `cwd_sync`: `{ "type": "cwd_sync", "enabled": true }`
+- `enter_directory`: `{ "type": "enter_directory", "name": "src" }`
+- `enter_parent_directory`: `{ "type": "enter_parent_directory" }`
+- `delete_file`: `{ "type": "delete_file", "name": "old.log" }`
 - `disconnect`: `{ "type": "disconnect" }`
 - `ping`: `{ "type": "ping" }`
 

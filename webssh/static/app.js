@@ -37,6 +37,11 @@ const downloadProgressText = document.querySelector("#download-progress-text");
 const downloadProgressBar = document.querySelector("#download-progress-bar");
 const cancelDownloadButton = document.querySelector("#cancel-download");
 const downloadForm = document.querySelector("#download-form");
+const confirmDialog = document.querySelector("#confirm-dialog");
+const confirmDialogTitle = document.querySelector("#confirm-dialog-title");
+const confirmDialogMessage = document.querySelector("#confirm-dialog-message");
+const confirmDialogCancel = document.querySelector("#confirm-dialog-cancel");
+const confirmDialogConfirm = document.querySelector("#confirm-dialog-confirm");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
 const CONNECT_CONFIG_CACHE_KEY = "py_web_ssh_last_connect_config";
@@ -96,6 +101,11 @@ const translations = {
     directoryUnreadable: "Directory structure is unreadable.",
     directoryUp: "UP",
     enterDirectory: "Enter Dir",
+    deleteFile: "Delete",
+    deleteFileTitle: "Delete file?",
+    deleteFileMessage: 'Delete "{name}" from the remote directory?',
+    confirmDelete: "Delete",
+    cancel: "Cancel",
     shellNotReady: "Shell prompt is not ready.",
     waitingDownload: "Waiting for download",
     cancelDownload: "Cancel download",
@@ -198,6 +208,11 @@ const translations = {
     directoryUnreadable: "目录结构不可读",
     directoryUp: "UP",
     enterDirectory: "进入目录",
+    deleteFile: "删除",
+    deleteFileTitle: "删除文件？",
+    deleteFileMessage: "要从远端目录删除“{name}”吗？",
+    confirmDelete: "删除",
+    cancel: "取消",
     shellNotReady: "Shell 提示符尚未就绪。",
     waitingDownload: "等待下载",
     cancelDownload: "取消下载",
@@ -319,6 +334,7 @@ let activeDownload = null;
 let reconnectConfigKeyPromise = null;
 let encryptedConnectConfigAvailable = false;
 let reconnectInProgress = false;
+let activeConfirmResolver = null;
 
 sessionStorage.removeItem(CONNECT_CONFIG_CACHE_KEY);
 applyLanguage(currentLanguage);
@@ -355,11 +371,20 @@ directoryPanelToggle.addEventListener("click", () => {
 });
 directoryUpButton.addEventListener("click", enterParentDirectory);
 cancelDownloadButton.addEventListener("click", cancelActiveDownload);
+confirmDialogCancel.addEventListener("click", () => resolveConfirmDialog(false));
+confirmDialogConfirm.addEventListener("click", () => resolveConfirmDialog(true));
+confirmDialog.addEventListener("click", (event) => {
+  if (event.target === confirmDialog) resolveConfirmDialog(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !confirmDialog.hidden) resolveConfirmDialog(false);
+});
 
 term.onData((data) => {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     return;
   }
+  setShellReady(false);
   ws.send(JSON.stringify({ type: "input", data: stringToBase64(data) }));
 });
 
@@ -559,6 +584,23 @@ function enterParentDirectory() {
     return;
   }
   ws.send(JSON.stringify({ type: "enter_parent_directory" }));
+}
+
+async function deleteDirectoryFile(entry) {
+  if (!directoryDeleteEnabled(entry) || activeDownload) return;
+  const confirmed = await showConfirmDialog({
+    title: t("deleteFileTitle"),
+    message: t("deleteFileMessage").replace("{name}", entry.name || ""),
+    confirmText: t("confirmDelete"),
+    cancelText: t("cancel"),
+  });
+  if (!confirmed || !directoryDeleteEnabled(entry) || activeDownload) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    appendLogLine(t("notConnected"));
+    return;
+  }
+  ws.send(JSON.stringify({ type: "delete_file", name: entry.name || "" }));
+  setShellReady(false);
 }
 
 async function startDownload(remotePath) {
@@ -1230,22 +1272,37 @@ function renderDirectoryRow(entry) {
     tableCell(entry.modified || "", "file-meta"),
   );
   const actionCell = document.createElement("td");
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "directory-download-button";
+  actionCell.className = "directory-action-cell";
+  const actionRow = document.createElement("div");
+  actionRow.className = "directory-action-row";
+  const button = directoryActionButton();
   if (entry.type === "directory") {
     button.classList.add("directory-enter-button");
     button.textContent = t("enterDirectory");
     button.disabled = !directoryEnterEnabled() || Boolean(activeDownload);
     button.addEventListener("click", () => enterDirectory(entry));
+    actionRow.appendChild(button);
   } else {
     button.textContent = t("download");
     button.disabled = !entry.downloadable || Boolean(activeDownload);
     button.addEventListener("click", () => startDirectoryDownload(entry));
+    actionRow.appendChild(button);
+    const deleteButton = directoryActionButton("directory-delete-button");
+    deleteButton.textContent = t("deleteFile");
+    deleteButton.disabled = !directoryDeleteEnabled(entry) || Boolean(activeDownload);
+    deleteButton.addEventListener("click", () => deleteDirectoryFile(entry));
+    actionRow.appendChild(deleteButton);
   }
-  actionCell.appendChild(button);
+  actionCell.appendChild(actionRow);
   row.appendChild(actionCell);
   return row;
+}
+
+function directoryActionButton(extraClass = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `directory-download-button ${extraClass}`.trim();
+  return button;
 }
 
 function tableCell(text, className = "") {
@@ -1284,6 +1341,10 @@ function setWebSocketState(state) {
 
 function directoryEnterEnabled() {
   return shellReady && currentWebSocketState === "open" && currentSessionState === "connected";
+}
+
+function directoryDeleteEnabled(entry) {
+  return Boolean(entry && entry.type !== "directory" && directoryEnterEnabled());
 }
 
 function directoryUpEnabled() {
@@ -1349,6 +1410,27 @@ function setStatus(text) {
   currentStatusKind = "";
   statusElement.textContent = text;
   statusElement.removeAttribute("data-i18n");
+}
+
+function showConfirmDialog({ title, message, confirmText, cancelText }) {
+  if (activeConfirmResolver) resolveConfirmDialog(false);
+  confirmDialogTitle.textContent = title;
+  confirmDialogMessage.textContent = message;
+  confirmDialogConfirm.textContent = confirmText;
+  confirmDialogCancel.textContent = cancelText;
+  confirmDialog.hidden = false;
+  confirmDialogConfirm.focus();
+  return new Promise((resolve) => {
+    activeConfirmResolver = resolve;
+  });
+}
+
+function resolveConfirmDialog(confirmed) {
+  if (!activeConfirmResolver) return;
+  const resolve = activeConfirmResolver;
+  activeConfirmResolver = null;
+  confirmDialog.hidden = true;
+  resolve(Boolean(confirmed));
 }
 
 function appendLogEntry(entry) {

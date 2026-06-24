@@ -124,6 +124,14 @@ button.primary {
   font-weight: 700;
 }
 
+button.danger {
+  border-color: #ffb52d;
+  background:
+    linear-gradient(180deg, #b46712, #5c2d0a);
+  color: #fff5cf;
+  font-weight: 700;
+}
+
 input,
 select {
   width: 100%;
@@ -682,6 +690,17 @@ progress {
   white-space: nowrap;
 }
 
+.directory-table .directory-action-cell {
+  min-width: 142px;
+}
+
+.directory-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
 .directory-download-button {
   min-height: 30px;
   border-color: #2bea55;
@@ -697,6 +716,58 @@ progress {
   background:
     linear-gradient(180deg, #236f91, #0c3852);
   color: #e7f8ff;
+}
+
+.directory-delete-button {
+  border-color: #ffb52d;
+  background:
+    linear-gradient(180deg, #b46712, #5c2d0a);
+  color: #fff5cf;
+}
+
+.confirm-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    repeating-linear-gradient(0deg, rgba(46, 185, 235, 0.04) 0 1px, transparent 1px 9px),
+    rgba(1, 5, 8, 0.78);
+}
+
+.confirm-dialog[hidden] {
+  display: none;
+}
+
+.confirm-dialog-box {
+  width: min(420px, 100%);
+  border: 1px solid var(--line-hot);
+  border-radius: 3px;
+  background:
+    linear-gradient(180deg, rgba(13, 35, 50, 0.98), rgba(3, 9, 14, 0.99));
+  padding: 16px;
+  box-shadow: 0 0 32px var(--shadow-orange), inset 0 0 24px rgba(42, 167, 218, 0.12);
+}
+
+.confirm-dialog-box h2 {
+  margin: 0 0 10px;
+  color: #fff3d2;
+  font-size: 18px;
+}
+
+.confirm-dialog-box p {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 .terminal-guard {

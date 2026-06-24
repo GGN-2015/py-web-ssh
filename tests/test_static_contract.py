@@ -259,6 +259,8 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'id="directory-table-body"' in markup
     assert 'id="download-progress"' in markup
     assert 'id="cancel-download"' in markup
+    assert 'id="confirm-dialog"' in markup
+    assert 'id="confirm-dialog-confirm"' in markup
     assert "--directory-tab-width: 42px;" in styles
     assert ".terminal-layout {\n  position: relative;" in styles
     assert "padding-right: var(--directory-tab-width);" in styles
@@ -279,17 +281,26 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'directoryUnreadable: "Directory structure is unreadable."' in script
     assert 'directoryUnreadable: "目录结构不可读"' in script
     assert 'directoryUp: "UP"' in script
+    assert 'deleteFile: "Delete"' in script
+    assert 'deleteFile: "删除"' in script
+    assert 'deleteFileMessage: ' in script
     assert 'message.type === "directory_listing"' in script
     assert 'message.type === "shell_ready"' in script
     assert "function enterDirectory(entry)" in script
     assert "function enterParentDirectory()" in script
+    assert "function deleteDirectoryFile(entry)" in script
     assert "function directoryUpEnabled()" in script
+    assert "function directoryDeleteEnabled(entry)" in script
     assert "function directoryEnterEnabled()" in script
     assert 'ws.send(JSON.stringify({ type: "enter_directory", name: entry.name || "" }));' in script
     assert 'ws.send(JSON.stringify({ type: "enter_parent_directory" }));' in script
+    assert 'ws.send(JSON.stringify({ type: "delete_file", name: entry.name || "" }));' in script
+    assert 'setShellReady(false);' in script
     assert "function renderDirectoryPanel()" in script
     assert "function startDirectoryDownload(entry)" in script
     assert "function startDownload(remotePath)" in script
+    assert ".directory-delete-button" in styles
+    assert ".confirm-dialog" in styles
     assert 'fetch(`/api/sessions/${sessionId}/files/downloads`' in script
     assert 'fetch(`/api/transfers/${downloadState.transferId}/download`' in script
     assert 'await fetch(`/api/transfers/${activeDownload.transferId}`, { method: "DELETE" });' in script
