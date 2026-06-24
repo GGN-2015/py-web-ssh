@@ -142,6 +142,24 @@ def test_frontend_enforces_target_host_security_policies_before_submit() -> None
     assert 'return t("ipv6HostBlocked");' in script
 
 
+def test_closed_non_empty_terminal_is_guarded_from_focus_and_clicks() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    styles = Path("webssh/static/styles.css").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'id="terminal-guard"' in markup
+    assert ".terminal-guard" in styles
+    assert "pointer-events: auto;" in styles
+    assert "#terminal.terminal-disabled" in styles
+    assert "function setSessionState(state)" in script
+    assert 'currentSessionState === "closed" && terminalHasText()' in script
+    assert 'terminalGuardElement.hidden = !disabled;' in script
+    assert 'terminalElement.classList.toggle("terminal-disabled", disabled);' in script
+    assert 'focusTarget.setAttribute("tabindex", "-1");' in script
+    assert "focusTarget.blur();" in script
+    assert "setTerminalSessionState(\"\");" in script
+
+
 def test_frontend_no_longer_exposes_agent_or_known_hosts_controls() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")

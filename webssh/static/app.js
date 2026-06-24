@@ -20,6 +20,7 @@ const appSubtitleElement = document.querySelector("#app-subtitle");
 const appVersionElement = document.querySelector("#app-version");
 const uploadProbeSizeInput = document.querySelector("#upload-probe-size");
 const uploadProbeUnitSelect = document.querySelector("#upload-probe-unit");
+const terminalGuardElement = document.querySelector("#terminal-guard");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
 const MIN_UPLOAD_PROBE_BYTES = 64;
@@ -215,6 +216,7 @@ let activeSessionId = localStorage.getItem("py-web-ssh-session") || "";
 let lastAppliedSeq = 0;
 let snapshotTimer = null;
 let activeUpload = null;
+let currentSessionState = "";
 
 applyLanguage(currentLanguage);
 initialize();
@@ -500,6 +502,7 @@ function connectWebSocket(sessionId) {
     sendSnapshot();
     ws.close();
   }
+  setTerminalSessionState("");
   term.focus();
   setStatus(t("connectingWebSocket"));
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
@@ -673,13 +676,13 @@ async function handleMessage(message) {
     appendLogLine(`${t("boundSession")} ${message.session_id}`);
   } else if (message.type === "replay") {
     await replayTerminal(message);
-    setStatus(`${t("sessionState")}: ${message.state}`);
+    setSessionState(message.state);
     if (message.warning) appendLogLine(message.warning);
     for (const entry of message.logs || []) appendLogEntry(entry);
   } else if (message.type === "output") {
     await writeChunk(message);
   } else if (message.type === "status") {
-    setStatus(`${t("sessionState")}: ${message.state}`);
+    setSessionState(message.state);
   } else if (message.type === "log") {
     appendLogEntry(message.entry);
   } else if (message.type === "warning") {
@@ -690,6 +693,7 @@ async function handleMessage(message) {
 async function replayTerminal(message) {
   term.reset();
   lastAppliedSeq = 0;
+  updateTerminalGuard();
   if (message.snapshot) {
     await writeTerminal(base64ToString(message.snapshot));
     lastAppliedSeq = message.snapshot_seq || 0;
@@ -708,7 +712,12 @@ async function writeChunk(chunk) {
 }
 
 function writeTerminal(data) {
-  return new Promise((resolve) => term.write(data, resolve));
+  return new Promise((resolve) => {
+    term.write(data, () => {
+      updateTerminalGuard();
+      resolve();
+    });
+  });
 }
 
 function sendResize() {
@@ -747,6 +756,50 @@ async function readPrivateKey() {
 function updateSessionUi(sessionId) {
   sessionLabel.textContent = sessionId ? `UUID ${sessionId}` : "";
   logsLink.href = sessionId ? `/sessions/${sessionId}/logs` : "#";
+}
+
+function setSessionState(state) {
+  setStatus(`${t("sessionState")}: ${state}`);
+  setTerminalSessionState(state);
+}
+
+function setTerminalSessionState(state) {
+  currentSessionState = state || "";
+  updateTerminalGuard();
+}
+
+function updateTerminalGuard() {
+  const disabled = currentSessionState === "closed" && terminalHasText();
+  terminalGuardElement.hidden = !disabled;
+  terminalElement.classList.toggle("terminal-disabled", disabled);
+  setTerminalFocusDisabled(disabled);
+}
+
+function terminalHasText() {
+  return Boolean(serializeAddon.serialize().trim());
+}
+
+function setTerminalFocusDisabled(disabled) {
+  const focusTarget = terminalElement.querySelector(".xterm-helper-textarea");
+  if (!focusTarget) return;
+  if (disabled) {
+    if (!Object.prototype.hasOwnProperty.call(focusTarget.dataset, "previousTabindex")) {
+      focusTarget.dataset.previousTabindex = focusTarget.getAttribute("tabindex") || "";
+    }
+    focusTarget.setAttribute("tabindex", "-1");
+    focusTarget.blur();
+    if (document.activeElement && terminalElement.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
+  } else if (Object.prototype.hasOwnProperty.call(focusTarget.dataset, "previousTabindex")) {
+    const previous = focusTarget.dataset.previousTabindex;
+    if (previous) {
+      focusTarget.setAttribute("tabindex", previous);
+    } else {
+      focusTarget.removeAttribute("tabindex");
+    }
+    delete focusTarget.dataset.previousTabindex;
+  }
 }
 
 function setStatus(text) {

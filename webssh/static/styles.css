@@ -411,6 +411,7 @@ progress {
 }
 
 #terminal-pane {
+  position: relative;
   background: #0b0f14;
   padding: 8px;
 }
@@ -418,6 +419,25 @@ progress {
 #terminal {
   width: 100%;
   height: calc(100vh - 68px);
+}
+
+.terminal-guard {
+  position: absolute;
+  inset: 8px;
+  z-index: 3;
+  background: rgba(120, 130, 140, 0.38);
+  cursor: not-allowed;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.terminal-guard[hidden] {
+  display: none;
+}
+
+#terminal.terminal-disabled {
+  pointer-events: none;
+  user-select: none;
 }
 
 #logs-pane {
