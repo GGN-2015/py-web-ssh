@@ -28,6 +28,8 @@ CWD_OSC_SUFFIX = b"\x07"
 CWD_TOKEN_PLACEHOLDER = "__PY_WEB_SSH_CWD_TOKEN__"
 CWD_REPORT_FUNCTION = "__py_web_ssh_cwd_report"
 CWD_LIST_FUNCTION = "__py_web_ssh_cwd_list"
+HIDDEN_COMMAND_ECHO_OFF = "stty -echo 2>/dev/null"
+HIDDEN_COMMAND_ECHO_ON = "stty echo 2>/dev/null"
 CWD_INSTALL_COMMAND_TEMPLATE = (
     "__py_web_ssh_cwd_list(){ "
     "__py_web_ssh_cwd_ls=$(LC_ALL=C command ls -al 2>&1 | command base64 | command tr -d '\\r\\n') || __py_web_ssh_cwd_ls=; "
@@ -329,12 +331,16 @@ class TerminalSession:
 
     def _send_hidden_terminal_command(self, command: str) -> None:
         echo = command.encode("utf-8")
-        payload = echo + b"\n"
+        echo_off = HIDDEN_COMMAND_ECHO_OFF.encode("ascii")
+        echo_on = HIDDEN_COMMAND_ECHO_ON.encode("ascii")
+        payload = b"\n".join((echo_off, echo, echo_on, b""))
         with self._channel_lock:
             if self._channel is None or self.state != "connected":
                 return
             with self._lock:
+                self._hidden_command_echoes.append(echo_off)
                 self._hidden_command_echoes.append(echo)
+                self._hidden_command_echoes.append(echo_on)
             self._channel.sendall(payload)
 
     def _filter_hidden_terminal_output(self, data: bytes) -> bytes:
@@ -392,13 +398,11 @@ class TerminalSession:
     def _remove_hidden_command_echoes(self, data: bytes) -> bytes:
         with self._lock:
             echoes = list(self._hidden_command_echoes)
-        if not echoes:
-            buffered = self._hidden_echo_filter_buffer + data
-            self._hidden_echo_filter_buffer = b""
-            return buffered
-
         data = self._hidden_echo_filter_buffer + data
         self._hidden_echo_filter_buffer = b""
+        if not echoes:
+            return data
+
         if not data:
             return data
 
@@ -406,32 +410,89 @@ class TerminalSession:
         remaining: list[bytes] = []
         buffered_tail = b""
         for echo in echoes:
-            removed = False
-            for pattern in (echo + b"\r\n", echo + b"\n", echo + b"\r"):
-                if pattern in visible:
-                    visible = visible.replace(pattern, b"")
-                    removed = True
-            echo_index = visible.find(echo)
-            if echo_index >= 0:
-                if echo_index + len(echo) == len(visible):
-                    visible = visible[:echo_index]
-                    buffered_tail = echo
-                    remaining.append(echo)
-                    continue
-                visible = visible.replace(echo, b"")
-                removed = True
-            if not removed:
+            visible, echo_tail, removed = self._remove_hidden_command_echo(visible, echo)
+            if echo_tail:
+                buffered_tail = echo_tail + buffered_tail
+            if echo_tail or not removed:
                 remaining.append(echo)
 
-        tail_length = self._hidden_echo_tail_length(visible, remaining)
-        if tail_length:
-            buffered_tail = visible[-tail_length:] + buffered_tail
-            visible = visible[:-tail_length]
+        if not buffered_tail:
+            tail_length = self._hidden_echo_tail_length(visible, remaining)
+            if tail_length:
+                buffered_tail = visible[-tail_length:]
+                visible = visible[:-tail_length]
         self._hidden_echo_filter_buffer = buffered_tail
 
         with self._lock:
             self._hidden_command_echoes = remaining[-8:]
         return visible
+
+    def _remove_hidden_command_echo(self, data: bytes, echo: bytes) -> tuple[bytes, bytes, bool]:
+        if not echo:
+            return data, b"", True
+
+        visible = bytearray()
+        index = 0
+        removed = False
+        first = echo[:1]
+        while index < len(data):
+            start = data.find(first, index)
+            if start < 0:
+                visible.extend(data[index:])
+                break
+            visible.extend(data[index:start])
+            status, end = self._match_hidden_command_echo(data, start, echo)
+            if status == "complete":
+                if end == len(data):
+                    return bytes(visible), data[start:], removed
+                index = self._consume_hidden_command_echo_suffix(data, end)
+                removed = True
+                continue
+            if status == "incomplete":
+                return bytes(visible), data[start:], removed
+            visible.append(data[start])
+            index = start + 1
+
+        return bytes(visible), b"", removed
+
+    def _match_hidden_command_echo(self, data: bytes, start: int, echo: bytes) -> tuple[str, int]:
+        data_index = start
+        echo_index = 0
+        while echo_index < len(echo):
+            if data_index >= len(data):
+                return "incomplete", data_index
+            ignored_length = self._hidden_echo_ignored_sequence_length(data, data_index)
+            if ignored_length is None:
+                return "incomplete", data_index
+            if ignored_length:
+                data_index += ignored_length
+                continue
+            if data[data_index] != echo[echo_index]:
+                return "mismatch", data_index
+            data_index += 1
+            echo_index += 1
+        return "complete", data_index
+
+    def _hidden_echo_ignored_sequence_length(self, data: bytes, index: int) -> int | None:
+        byte = data[index]
+        if byte in (0x08, 0x0A, 0x0D):
+            return 1
+        if data.startswith(b"\x1b[", index):
+            for cursor in range(index + 2, len(data)):
+                if 0x40 <= data[cursor] <= 0x7E:
+                    return cursor - index + 1
+            return None
+        return 0
+
+    def _consume_hidden_command_echo_suffix(self, data: bytes, index: int) -> int:
+        while index < len(data):
+            ignored_length = self._hidden_echo_ignored_sequence_length(data, index)
+            if ignored_length is None:
+                return index
+            if not ignored_length:
+                break
+            index += ignored_length
+        return index
 
     def _hidden_echo_tail_length(self, data: bytes, echoes: list[bytes]) -> int:
         tail_length = 0

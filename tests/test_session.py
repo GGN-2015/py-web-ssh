@@ -7,6 +7,8 @@ from webssh.session import (
     CWD_OSC_PREFIX,
     CWD_LISTING_OSC_PREFIX,
     CWD_OSC_SUFFIX,
+    HIDDEN_COMMAND_ECHO_OFF,
+    HIDDEN_COMMAND_ECHO_ON,
     SessionManager,
     TerminalSession,
     parse_ls_al_listing,
@@ -200,6 +202,47 @@ def test_hidden_terminal_command_echo_waits_for_trailing_newline() -> None:
 
     assert session._filter_hidden_terminal_output(b"secret command") == b""
     assert session._filter_hidden_terminal_output(b"\r\nafter") == b"after"
+
+
+def test_hidden_terminal_command_echo_ignores_prompt_rewrap_sequences() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session._hidden_command_echoes.append(b"abcdef")
+    wrapped_echo = b"ab\r\n\x1b[?2004hcd\x1b[Kef\r\nvisible"
+
+    assert session._filter_hidden_terminal_output(wrapped_echo) == b"visible"
+
+
+def test_send_hidden_terminal_command_disables_remote_pty_echo() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+
+    session._send_hidden_terminal_command("secret command")
+
+    assert channel.sent == [
+        (
+            f"{HIDDEN_COMMAND_ECHO_OFF}\n"
+            "secret command\n"
+            f"{HIDDEN_COMMAND_ECHO_ON}\n"
+        ).encode("utf-8")
+    ]
+    assert session._hidden_command_echoes == [
+        HIDDEN_COMMAND_ECHO_OFF.encode("ascii"),
+        b"secret command",
+        HIDDEN_COMMAND_ECHO_ON.encode("ascii"),
+    ]
 
 
 def test_cwd_sync_off_filters_but_does_not_store_hidden_cwd() -> None:
