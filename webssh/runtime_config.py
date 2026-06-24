@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +12,19 @@ from .models import ConnectRequest
 
 DEFAULT_TITLE = "py-web-ssh"
 DEFAULT_SUBTITLE = "Web SSH Client"
+LAN_IP_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in (
+        "10.0.0.0/8",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +35,7 @@ class RuntimeConfig:
     lock_username: str | None = None
     lock_password: str | None = None
     lock_private_key_path: Path | None = None
+    ban_lan: bool = False
 
     @property
     def lock_password_enabled(self) -> bool:
@@ -42,7 +57,8 @@ class RuntimeConfig:
                 "username": {"enabled": self.lock_username is not None, "value": self.lock_username},
                 "password": {"enabled": self.lock_password_enabled},
                 "private_key": {"enabled": self.lock_private_key_enabled},
-            }
+            },
+            "security": {"ban_lan": self.ban_lan},
         }
 
     def apply_to_connect_request(self, incoming: ConnectRequest) -> ConnectRequest:
@@ -59,6 +75,9 @@ class RuntimeConfig:
             if requested and requested != self.lock_username:
                 raise HTTPException(status_code=403, detail="Username is locked by the server.")
             data["username"] = self.lock_username
+
+        if self.ban_lan and _is_lan_ip_literal(str(data.get("host") or "")):
+            raise HTTPException(status_code=403, detail="LAN IP targets are blocked by the server.")
 
         if self.lock_password is not None:
             data["password"] = self.lock_password
@@ -80,6 +99,7 @@ def configure_runtime_locks(
     lock_username: str | None = None,
     lock_password: str | None = None,
     lock_private_key: str | None = None,
+    ban_lan: bool = False,
 ) -> None:
     global runtime_config
     key_path = Path(lock_private_key).expanduser().resolve() if lock_private_key else None
@@ -92,6 +112,7 @@ def configure_runtime_locks(
         lock_username=_blank_to_none(lock_username),
         lock_password=lock_password if lock_password is not None else None,
         lock_private_key_path=key_path,
+        ban_lan=ban_lan,
     )
 
 
@@ -132,6 +153,14 @@ def add_runtime_lock_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="KEY_FILE",
         help="Bind this server-side SSH private key file. It is never sent to the browser.",
     )
+    parser.add_argument(
+        "--ban-lan",
+        action="store_true",
+        help=(
+            "Reject SSH targets entered as private/local LAN IP literals. "
+            "Hostnames are not resolved for this check."
+        ),
+    )
 
 
 def _read_locked_private_key(path: Path) -> str:
@@ -153,3 +182,14 @@ def _blank_to_default(value: str | None, default: str) -> str:
         return default
     value = value.strip()
     return value or default
+
+
+def _is_lan_ip_literal(host: str) -> bool:
+    value = host.strip()
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return any(address in network for network in LAN_IP_NETWORKS)

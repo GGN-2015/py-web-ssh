@@ -28,6 +28,7 @@ def test_cli_defaults_listen_on_all_interfaces_port_8022_and_default_branding() 
     assert args.title is None
     assert args.subtitle is None
     assert args.launch_browser is False
+    assert args.ban_lan is False
 
 
 def test_cli_accepts_title_and_subtitle_arguments() -> None:
@@ -47,6 +48,12 @@ def test_cli_accepts_auto_port_argument() -> None:
     args = build_arg_parser().parse_args(["--auto-port"])
 
     assert args.auto_port is True
+
+
+def test_cli_accepts_ban_lan_argument() -> None:
+    args = build_arg_parser().parse_args(["--ban-lan"])
+
+    assert args.ban_lan is True
 
 
 def test_python_package_empty_args_keep_original_defaults(monkeypatch) -> None:

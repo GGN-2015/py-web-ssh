@@ -144,6 +144,62 @@ def test_locked_secrets_are_applied_server_side(tmp_path: Path, monkeypatch) -> 
     assert session.config.private_key == "PRIVATE KEY TEXT"
 
 
+def test_ban_lan_rejects_direct_lan_ip_targets(monkeypatch) -> None:
+    configure_runtime_locks(ban_lan=True)
+    monkeypatch.setattr(app_module, "sessions", NoStartSessionManager(autostart_reaper=False))
+    client = TestClient(app)
+
+    for host in [
+        "10.0.0.5",
+        "127.0.0.1",
+        "169.254.1.10",
+        "172.16.0.1",
+        "192.168.1.10",
+        "::1",
+        "[::1]",
+        "fc00::1",
+        "fe80::1",
+    ]:
+        response = client.post(
+            "/api/sessions",
+            json={"host": host, "username": "root"},
+        )
+
+        assert response.status_code == 403
+        assert "LAN IP targets" in response.json()["detail"]
+
+
+def test_ban_lan_allows_domains_without_resolving_them(monkeypatch) -> None:
+    configure_runtime_locks(ban_lan=True)
+    manager = NoStartSessionManager(autostart_reaper=False)
+    monkeypatch.setattr(app_module, "sessions", manager)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/sessions",
+        json={"host": "router.local", "username": "root"},
+    )
+
+    assert response.status_code == 200
+    session = manager.get(response.json()["session_id"])
+    assert session is not None
+    assert session.config.host == "router.local"
+
+
+def test_ban_lan_allows_public_ip_targets(monkeypatch) -> None:
+    configure_runtime_locks(ban_lan=True)
+    manager = NoStartSessionManager(autostart_reaper=False)
+    monkeypatch.setattr(app_module, "sessions", manager)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/sessions",
+        json={"host": "8.8.8.8", "username": "root"},
+    )
+
+    assert response.status_code == 200
+
+
 def test_algorithm_endpoint_lists_supported_runtime_algorithms() -> None:
     client = TestClient(app)
 

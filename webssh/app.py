@@ -414,6 +414,7 @@ def main(argv: list[str] | None = None) -> None:
         lock_username=args.lock_username,
         lock_password=args.lock_pwd,
         lock_private_key=args.lock_private_key,
+        ban_lan=args.ban_lan,
     )
     run_server(args.host, args.port, launch_browser=args.launch_browser, auto_port=args.auto_port)
 
