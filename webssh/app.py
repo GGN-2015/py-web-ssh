@@ -346,6 +346,8 @@ async def _handle_ws_message(session, message: dict) -> None:
             session.resize(int(message.get("cols", 100)), int(message.get("rows", 30)))
         elif message_type == "snapshot":
             session.save_snapshot(int(message.get("seq", 0)), base64.b64decode(message.get("data", "")))
+        elif message_type == "cwd_sync":
+            session.set_cwd_sync_enabled(message.get("enabled") is True)
         elif message_type == "disconnect":
             session.close("Browser requested SSH disconnect.")
         elif message_type == "ping":

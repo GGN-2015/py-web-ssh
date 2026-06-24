@@ -264,6 +264,17 @@ label {
   min-height: auto;
 }
 
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.inline-check input {
+  width: auto;
+  min-height: auto;
+}
+
 .unit-input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 82px;

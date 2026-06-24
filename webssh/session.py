@@ -20,22 +20,28 @@ from .ssh_client import ConnectedClient, HostKeyInfo, connect_ssh
 
 
 SessionState = Literal["connecting", "waiting_host_key", "connected", "closing", "closed", "error"]
-CWD_OSC_PREFIX = b"\x1b]6970;cwd="
+CWD_OSC_PREFIX = b"\x1b]6970;cwd;"
 CWD_OSC_SUFFIX = b"\x07"
-CWD_REPORT_COMMAND = (
+CWD_TOKEN_PLACEHOLDER = "__PY_WEB_SSH_CWD_TOKEN__"
+CWD_REPORT_FUNCTION = "__py_web_ssh_cwd_report"
+CWD_INSTALL_COMMAND_TEMPLATE = (
     "__py_web_ssh_cwd_report(){ "
-    "printf '\\033]6970;cwd=%s\\007' \"$(command pwd 2>/dev/null || printf '%s' \"$PWD\")\"; "
-    "}; "
-    "if [ -n \"$BASH_VERSION\" ]; then "
-    "PROMPT_COMMAND=\"__py_web_ssh_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"; "
-    "elif [ -n \"$ZSH_VERSION\" ]; then "
-    "autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook precmd __py_web_ssh_cwd_report; "
-    "else "
-    "cd(){ command cd \"$@\" && __py_web_ssh_cwd_report; }; "
-    "pushd(){ command pushd \"$@\" && __py_web_ssh_cwd_report; }; "
-    "popd(){ command popd \"$@\" && __py_web_ssh_cwd_report; }; "
+    "__py_web_ssh_cwd_now=$(command pwd 2>/dev/null || printf '%s' \"$PWD\") || return; "
+    "if [ \"${__py_web_ssh_cwd_now}\" != \"${__py_web_ssh_cwd_last-}\" ]; then "
+    "__py_web_ssh_cwd_last=$__py_web_ssh_cwd_now; "
+    "printf '\\033]6970;cwd;" + CWD_TOKEN_PLACEHOLDER + "=%s\\007' \"$__py_web_ssh_cwd_now\" >&2; "
     "fi; "
-    "__py_web_ssh_cwd_report"
+    "}; "
+    "if [ -n \"${BASH_VERSION:-}\" ]; then "
+    "PROMPT_COMMAND=\"__py_web_ssh_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"; "
+    "elif [ -n \"${ZSH_VERSION:-}\" ]; then "
+    "autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook precmd __py_web_ssh_cwd_report || "
+    "precmd_functions+=(__py_web_ssh_cwd_report); "
+    "else "
+    "__py_web_ssh_cwd_prompt=; "
+    "PS1='${__py_web_ssh_cwd_prompt:-$(__py_web_ssh_cwd_report)}'\"${PS1-}\"; "
+    "PS2='${__py_web_ssh_cwd_prompt:-$(__py_web_ssh_cwd_report)}'\"${PS2-}\"; "
+    "fi"
 )
 
 
@@ -67,7 +73,12 @@ class TerminalSession:
         self._connected: ConnectedClient | None = None
         self._channel: paramiko.Channel | None = None
         self._snapshot: tuple[int, bytes, datetime] | None = None
+        self._cwd_token = uuid.uuid4().hex
+        self._cwd_osc_prefix = CWD_OSC_PREFIX + self._cwd_token.encode("ascii") + b"="
         self._current_working_directory = ""
+        self._cwd_sync_enabled = config.cwd_sync
+        self._cwd_sync_waiting_for_change = False
+        self._last_observed_working_directory = ""
         self._terminal_filter_buffer = b""
         self._hidden_echo_filter_buffer = b""
         self._hidden_command_echoes: list[bytes] = []
@@ -156,7 +167,8 @@ class TerminalSession:
                 "chunks": [self._chunk_payload(chunk) for chunk in chunks],
                 "logs": [entry.model_dump(mode="json") for entry in self._logs[-200:]],
                 "warning": warning,
-                "cwd": self._current_working_directory,
+                "cwd": self._current_working_directory if self._cwd_sync_enabled else "",
+                "cwd_sync": self._cwd_sync_enabled,
             }
 
     def send_input(self, data: bytes) -> None:
@@ -176,6 +188,15 @@ class TerminalSession:
         with self._lock:
             if seq <= self.history.next_seq:
                 self._snapshot = (seq, snapshot, datetime.now(timezone.utc))
+
+    def set_cwd_sync_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._cwd_sync_enabled = enabled
+            self._current_working_directory = ""
+            self._cwd_sync_waiting_for_change = enabled
+            self.updated_at = datetime.now(timezone.utc)
+        self._broadcast({"type": "cwd_sync", "enabled": enabled})
+        self._broadcast({"type": "cwd", "cwd": ""})
 
     def close(self, reason: str = "Client requested disconnect.") -> None:
         self.log("info", reason, None)
@@ -281,7 +302,11 @@ class TerminalSession:
 
     def _install_cwd_monitor(self) -> None:
         try:
-            self._send_hidden_terminal_command(CWD_REPORT_COMMAND)
+            command = CWD_INSTALL_COMMAND_TEMPLATE
+            if self._cwd_sync_enabled:
+                command = f"{command}; {CWD_REPORT_FUNCTION}"
+            command = command.replace(CWD_TOKEN_PLACEHOLDER, self._cwd_token)
+            self._send_hidden_terminal_command(command)
         except Exception as exc:
             self.log("warning", f"Could not start remote working-directory monitor: {exc}", None)
 
@@ -301,7 +326,7 @@ class TerminalSession:
         visible = bytearray()
 
         while pending:
-            start = pending.find(CWD_OSC_PREFIX)
+            start = pending.find(self._cwd_osc_prefix)
             if start < 0:
                 tail_length = self._cwd_osc_prefix_tail_length(pending)
                 if tail_length:
@@ -312,7 +337,7 @@ class TerminalSession:
                 break
 
             visible.extend(pending[:start])
-            payload_start = start + len(CWD_OSC_PREFIX)
+            payload_start = start + len(self._cwd_osc_prefix)
             end = pending.find(CWD_OSC_SUFFIX, payload_start)
             if end < 0:
                 self._terminal_filter_buffer = pending[start:]
@@ -325,8 +350,8 @@ class TerminalSession:
         return self._remove_hidden_command_echoes(bytes(visible))
 
     def _cwd_osc_prefix_tail_length(self, data: bytes) -> int:
-        for length in range(min(len(data), len(CWD_OSC_PREFIX) - 1), 0, -1):
-            if CWD_OSC_PREFIX.startswith(data[-length:]):
+        for length in range(min(len(data), len(self._cwd_osc_prefix) - 1), 0, -1):
+            if self._cwd_osc_prefix.startswith(data[-length:]):
                 return length
         return 0
 
@@ -388,6 +413,13 @@ class TerminalSession:
         if not cwd:
             return
         with self._lock:
+            changed = cwd != self._last_observed_working_directory
+            self._last_observed_working_directory = cwd
+            if not self._cwd_sync_enabled:
+                return
+            if self._cwd_sync_waiting_for_change and not changed:
+                return
+            self._cwd_sync_waiting_for_change = False
             if cwd == self._current_working_directory:
                 return
             self._current_working_directory = cwd

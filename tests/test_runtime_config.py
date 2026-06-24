@@ -96,6 +96,26 @@ def test_index_renders_custom_branding_and_package_version() -> None:
     assert f'<small id="app-version">(py-web-ssh v{__version__})</small>' in response.text
 
 
+def test_websocket_can_toggle_cwd_sync(monkeypatch) -> None:
+    manager = NoStartSessionManager(autostart_reaper=False)
+    monkeypatch.setattr(app_module, "sessions", manager)
+    client = TestClient(app)
+
+    response = client.post("/api/sessions", json={"host": "example.com", "username": "root"})
+    session_id = response.json()["session_id"]
+    session = manager.get(session_id)
+    assert session is not None
+
+    with client.websocket_connect(f"/ws/sessions/{session_id}") as websocket:
+        websocket.receive_json()
+        websocket.receive_json()
+        websocket.send_json({"type": "cwd_sync", "enabled": False})
+        assert websocket.receive_json() == {"type": "cwd_sync", "enabled": False}
+        assert websocket.receive_json() == {"type": "cwd", "cwd": ""}
+
+    assert session.replay_payload()["cwd_sync"] is False
+
+
 def test_locked_host_and_username_reject_tampered_request(monkeypatch) -> None:
     configure_runtime_locks(lock_host="allowed.example.com", lock_username="deploy")
     monkeypatch.setattr(app_module, "sessions", NoStartSessionManager(autostart_reaper=False))

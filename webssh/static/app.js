@@ -23,6 +23,7 @@ const uploadProbeUnitSelect = document.querySelector("#upload-probe-unit");
 const terminalGuardElement = document.querySelector("#terminal-guard");
 const currentDirectoryInput = document.querySelector("#current-directory");
 const uploadPathInput = document.querySelector("#upload-path");
+const cwdSyncInput = document.querySelector("#cwd-sync");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
 const MIN_UPLOAD_PROBE_BYTES = 64;
@@ -60,6 +61,7 @@ const translations = {
     reconnect: "Reconnect",
     disconnect: "Disconnect SSH",
     openLogs: "Open full logs",
+    cwdSync: "CWD Sync",
     currentDirectory: "Current directory",
     uploadRemotePath: "Upload remote path",
     localFile: "Local file",
@@ -130,6 +132,7 @@ const translations = {
     reconnect: "重连",
     disconnect: "断开 SSH",
     openLogs: "打开完整日志",
+    cwdSync: "CWD Sync",
     currentDirectory: "当前目录",
     uploadRemotePath: "上传到远端路径",
     localFile: "本地文件",
@@ -222,6 +225,7 @@ let snapshotTimer = null;
 let activeUpload = null;
 let currentSessionState = "";
 let currentWorkingDirectory = "";
+let cwdSyncEnabled = true;
 let uploadPathDefaultSource = "";
 let uploadPathTouched = false;
 
@@ -247,6 +251,10 @@ uploadProbeUnitSelect.addEventListener("change", normalizeUploadProbeSize);
 uploadPathInput.addEventListener("input", () => {
   uploadPathTouched = uploadPathInput.value.trim() !== uploadPathDefaultSource;
 });
+cwdSyncInput.addEventListener("change", () => {
+  setCwdSyncEnabled(cwdSyncInput.checked);
+  sendCwdSyncState();
+});
 
 term.onData((data) => {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -268,6 +276,7 @@ document.querySelector("#connect-form").addEventListener("submit", async (event)
     private_key_passphrase: valueOf("#private-key-passphrase"),
     look_for_keys: checked("#look-for-keys"),
     disabled_algorithms: collectDisabledAlgorithms(),
+    cwd_sync: cwdSyncInput.checked,
     term: "xterm-256color",
     size: { cols: term.cols, rows: term.rows },
   };
@@ -688,6 +697,7 @@ async function handleMessage(message) {
   } else if (message.type === "replay") {
     await replayTerminal(message);
     setSessionState(message.state);
+    setCwdSyncEnabled(message.cwd_sync !== false);
     setCurrentWorkingDirectory(message.cwd || "");
     if (message.warning) appendLogLine(message.warning);
     for (const entry of message.logs || []) appendLogEntry(entry);
@@ -695,6 +705,8 @@ async function handleMessage(message) {
     await writeChunk(message);
   } else if (message.type === "status") {
     setSessionState(message.state);
+  } else if (message.type === "cwd_sync") {
+    setCwdSyncEnabled(message.enabled === true);
   } else if (message.type === "cwd") {
     setCurrentWorkingDirectory(message.cwd || "");
   } else if (message.type === "log") {
@@ -778,6 +790,9 @@ function setSessionState(state) {
 }
 
 function setCurrentWorkingDirectory(cwd) {
+  if (!cwdSyncEnabled) {
+    cwd = "";
+  }
   const previousDefault = uploadPathDefaultSource;
   currentWorkingDirectory = cwd || "";
   currentDirectoryInput.value = currentWorkingDirectory;
@@ -790,6 +805,21 @@ function setCurrentWorkingDirectory(cwd) {
     return;
   }
   updateUploadPathDefault();
+}
+
+function setCwdSyncEnabled(enabled) {
+  cwdSyncEnabled = Boolean(enabled);
+  cwdSyncInput.checked = cwdSyncEnabled;
+  currentDirectoryInput.classList.toggle("locked", !cwdSyncEnabled);
+  if (!cwdSyncEnabled) {
+    setCurrentWorkingDirectory("");
+  }
+}
+
+function sendCwdSyncState() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "cwd_sync", enabled: cwdSyncEnabled }));
+  }
 }
 
 function updateUploadPathDefault() {

@@ -1,5 +1,12 @@
 from webssh.models import ConnectRequest
-from webssh.session import BrowserConnection, CWD_OSC_PREFIX, CWD_OSC_SUFFIX, SessionManager, TerminalSession
+from webssh.session import (
+    BrowserConnection,
+    CWD_INSTALL_COMMAND_TEMPLATE,
+    CWD_OSC_PREFIX,
+    CWD_OSC_SUFFIX,
+    SessionManager,
+    TerminalSession,
+)
 from webssh.ssh_client import HostKeyInfo
 
 
@@ -108,7 +115,7 @@ def test_hidden_cwd_osc_updates_replay_without_terminal_output() -> None:
     session = TerminalSession(
         ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
     )
-    output = b"before" + CWD_OSC_PREFIX + b"/srv/app" + CWD_OSC_SUFFIX + b"after"
+    output = b"before" + session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX + b"after"
 
     assert session._filter_hidden_terminal_output(output) == b"beforeafter"
 
@@ -121,8 +128,8 @@ def test_hidden_cwd_osc_can_span_recv_chunks() -> None:
     session = TerminalSession(
         ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
     )
-    first = b"visible" + CWD_OSC_PREFIX[:4]
-    second = CWD_OSC_PREFIX[4:] + b"/home/root" + CWD_OSC_SUFFIX + b"done"
+    first = b"visible" + session._cwd_osc_prefix[:4]
+    second = session._cwd_osc_prefix[4:] + b"/home/root" + CWD_OSC_SUFFIX + b"done"
 
     assert session._filter_hidden_terminal_output(first) == b"visible"
     assert session._filter_hidden_terminal_output(second) == b"done"
@@ -147,3 +154,67 @@ def test_hidden_terminal_command_echo_waits_for_trailing_newline() -> None:
 
     assert session._filter_hidden_terminal_output(b"secret command") == b""
     assert session._filter_hidden_terminal_output(b"\r\nafter") == b"after"
+
+
+def test_cwd_sync_off_filters_but_does_not_store_hidden_cwd() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000, cwd_sync=False)
+    )
+    output = session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX + b"visible"
+
+    assert session._filter_hidden_terminal_output(output) == b"visible"
+    assert session.replay_payload()["cwd"] == ""
+    assert session.replay_payload()["cwd_sync"] is False
+
+
+def test_reenabled_cwd_sync_waits_until_directory_changes() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session._filter_hidden_terminal_output(session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX)
+    session.set_cwd_sync_enabled(False)
+    session._filter_hidden_terminal_output(session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX)
+
+    session.set_cwd_sync_enabled(True)
+    session._filter_hidden_terminal_output(session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX)
+    assert session.replay_payload()["cwd"] == ""
+
+    session._filter_hidden_terminal_output(session._cwd_osc_prefix + b"/srv/next" + CWD_OSC_SUFFIX)
+    assert session.replay_payload()["cwd"] == "/srv/next"
+
+
+def test_non_session_cwd_osc_is_not_treated_as_hidden_sync() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    other = CWD_OSC_PREFIX + b"other-token=/tmp" + CWD_OSC_SUFFIX
+
+    assert session._filter_hidden_terminal_output(other) == other
+    assert session.replay_payload()["cwd"] == ""
+
+
+def test_send_input_does_not_probe_based_on_cd_like_text() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+
+    session.send_input(b"cd /tmp\r")
+
+    assert channel.sent == [b"cd /tmp\r"]
+
+
+def test_posix_cwd_monitor_does_not_override_cd_function() -> None:
+    assert "PS1=" in CWD_INSTALL_COMMAND_TEMPLATE
+    assert "PS2=" in CWD_INSTALL_COMMAND_TEMPLATE
+    assert "cd(){" not in CWD_INSTALL_COMMAND_TEMPLATE
+    assert "command cd" not in CWD_INSTALL_COMMAND_TEMPLATE
