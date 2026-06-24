@@ -64,7 +64,7 @@ Returns public, non-sensitive runtime configuration:
   "branding": {
     "title": "py-web-ssh",
     "subtitle": "Web SSH Client",
-    "version": "0.1.30"
+    "version": "0.1.32"
   },
   "locks": {
     "host": {"enabled": false, "value": null},
@@ -76,11 +76,16 @@ Returns public, non-sensitive runtime configuration:
     "ban_lan": false,
     "ban_dns": false,
     "ban_ipv6": false
+  },
+  "upload": {
+    "block_size_bytes": 1048576
   }
 }
 ```
 
 Password and private-key lock values are never returned.
+
+`upload.block_size_bytes` is the server default initial upload probe size after applying the `64 B` minimum.
 
 ### `GET /api/algorithms`
 
@@ -291,4 +296,3 @@ Browser-to-server messages:
 - `ping`: `{ "type": "ping" }`
 
 The hidden CWD sync OSC reports are filtered by the backend before terminal bytes are sent to the browser.
-

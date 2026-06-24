@@ -114,6 +114,8 @@ def test_upload_form_exposes_initial_probe_size_control() -> None:
 
     assert 'id="upload-probe-size"' in markup
     assert 'id="upload-probe-unit"' in markup
+    assert '<option value="tb">TB</option>' in markup
+    assert '<option value="gb">GB</option>' in markup
     assert '<option value="mb" selected>MB</option>' in markup
     assert '<option value="kb">KB</option>' in markup
     assert '<option value="b">B</option>' in markup
@@ -122,6 +124,10 @@ def test_upload_form_exposes_initial_probe_size_control() -> None:
     assert "const MIN_UPLOAD_PROBE_BYTES = 64;" in script
     assert "uploadProbeSizeInput.addEventListener(\"blur\", normalizeUploadProbeSize);" in script
     assert "uploadProbeUnitSelect.addEventListener(\"change\", normalizeUploadProbeSize);" in script
+    assert "function applyUploadDefaults(config)" in script
+    assert "applyUploadDefaults(runtimeConfig);" in script
+    assert "const UPLOAD_PROBE_UNITS_DESC = [\"tb\", \"gb\", \"mb\", \"kb\", \"b\"];" in script
+    assert "setUploadProbeSizeFromBytes(bytes);" in script
     assert 'uploadProbeSizeInput.value = String(MIN_UPLOAD_PROBE_BYTES);' in script
     assert 'uploadProbeUnitSelect.value = "b";' in script
 

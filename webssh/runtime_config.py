@@ -9,10 +9,24 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from . import __version__
+from .files import MIN_UPLOAD_COMMAND_BYTES, REQUESTED_UPLOAD_COMMAND_BYTES
 from .models import ConnectRequest
 
 DEFAULT_TITLE = "py-web-ssh"
 DEFAULT_SUBTITLE = "Web SSH Client"
+BLOCK_SIZE_MIN_WARNING = (
+    "Minimum upload file block size should be 64B; "
+    "the input value is too small, so it is forced to 64B."
+)
+BLOCK_SIZE_PATTERN = re.compile(r"^\s*(\d+)\s*([A-Za-z]{0,2})\s*$")
+BLOCK_SIZE_UNITS = {
+    "": 1,
+    "B": 1,
+    "KB": 1024,
+    "MB": 1024**2,
+    "GB": 1024**3,
+    "TB": 1024**4,
+}
 LAN_IP_NETWORKS = tuple(
     ipaddress.ip_network(network)
     for network in (
@@ -40,6 +54,7 @@ class RuntimeConfig:
     ban_dns: bool = False
     ban_ipv6: bool = False
     ban_hosts: tuple[str, ...] = ()
+    upload_block_size_bytes: int = REQUESTED_UPLOAD_COMMAND_BYTES
 
     @property
     def lock_password_enabled(self) -> bool:
@@ -66,6 +81,9 @@ class RuntimeConfig:
                 "ban_lan": self.ban_lan,
                 "ban_dns": self.ban_dns,
                 "ban_ipv6": self.ban_ipv6,
+            },
+            "upload": {
+                "block_size_bytes": self.upload_block_size_bytes,
             },
         }
 
@@ -122,6 +140,7 @@ def configure_runtime_locks(
     ban_dns: bool = False,
     ban_ipv6: bool = False,
     ban_hosts: list[str] | tuple[str, ...] | None = None,
+    upload_block_size_bytes: int | None = None,
 ) -> None:
     global runtime_config
     key_path = Path(lock_private_key).expanduser().resolve() if lock_private_key else None
@@ -138,6 +157,7 @@ def configure_runtime_locks(
         ban_dns=ban_dns,
         ban_ipv6=ban_ipv6,
         ban_hosts=_normalize_ban_hosts(ban_hosts),
+        upload_block_size_bytes=_normalize_upload_block_size(upload_block_size_bytes),
     )
 
 
@@ -206,6 +226,32 @@ def add_runtime_lock_arguments(parser: argparse.ArgumentParser) -> None:
             "Repeat to add more patterns. Use * as a wildcard."
         ),
     )
+    parser.add_argument(
+        "--block-size",
+        type=parse_block_size_argument,
+        default=None,
+        metavar="SIZE",
+        help=(
+            "Set the initial upload probe block size. "
+            "Examples: 1MB, 12KB, 1024B, 2048, 1GB, 1TB."
+        ),
+    )
+
+
+def parse_block_size_argument(value: str) -> int:
+    match = BLOCK_SIZE_PATTERN.fullmatch(value)
+    if match is None:
+        raise argparse.ArgumentTypeError(
+            "block size must be a non-negative integer with optional B, KB, MB, GB, or TB unit."
+        )
+    number_text, unit_text = match.groups()
+    unit = unit_text.upper()
+    multiplier = BLOCK_SIZE_UNITS.get(unit)
+    if multiplier is None:
+        raise argparse.ArgumentTypeError(
+            "block size unit must be one of B, KB, MB, GB, or TB."
+        )
+    return int(number_text) * multiplier
 
 
 def _read_locked_private_key(path: Path) -> str:
@@ -227,6 +273,12 @@ def _blank_to_default(value: str | None, default: str) -> str:
         return default
     value = value.strip()
     return value or default
+
+
+def _normalize_upload_block_size(value: int | None) -> int:
+    if value is None:
+        return REQUESTED_UPLOAD_COMMAND_BYTES
+    return max(value, MIN_UPLOAD_COMMAND_BYTES)
 
 
 def _is_lan_ip_literal(host: str) -> bool:

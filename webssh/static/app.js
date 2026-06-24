@@ -38,10 +38,13 @@ const downloadForm = document.querySelector("#download-form");
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
 const MIN_UPLOAD_PROBE_BYTES = 64;
 const UPLOAD_PROBE_UNIT_BYTES = {
+  tb: 1024 * 1024 * 1024 * 1024,
+  gb: 1024 * 1024 * 1024,
   mb: 1024 * 1024,
   kb: 1024,
   b: 1,
 };
+const UPLOAD_PROBE_UNITS_DESC = ["tb", "gb", "mb", "kb", "b"];
 const translations = {
   en: {
     pinRequired: "PIN required",
@@ -689,6 +692,7 @@ async function loadRuntimeConfig() {
   runtimeConfig = await response.json();
   applyBranding(runtimeConfig);
   applyRuntimeLocks(runtimeConfig);
+  applyUploadDefaults(runtimeConfig);
 }
 
 function applyBranding(config) {
@@ -718,6 +722,22 @@ function applyRuntimeLocks(config) {
   document.querySelector("#private-key-file").disabled = privateKeyLocked;
   document.querySelector("#private-key-file").value = "";
   document.querySelector("#private-key-lock-note").hidden = !privateKeyLocked;
+}
+
+function applyUploadDefaults(config) {
+  const upload = config.upload || {};
+  const bytes = Number(upload.block_size_bytes);
+  if (!Number.isFinite(bytes) || bytes < 1) {
+    return;
+  }
+  setUploadProbeSizeFromBytes(bytes);
+}
+
+function setUploadProbeSizeFromBytes(bytes) {
+  const safeBytes = Math.max(MIN_UPLOAD_PROBE_BYTES, Math.floor(bytes));
+  const unit = UPLOAD_PROBE_UNITS_DESC.find((candidate) => safeBytes % UPLOAD_PROBE_UNIT_BYTES[candidate] === 0) || "b";
+  uploadProbeSizeInput.value = String(safeBytes / UPLOAD_PROBE_UNIT_BYTES[unit]);
+  uploadProbeUnitSelect.value = unit;
 }
 
 async function loadAlgorithms() {

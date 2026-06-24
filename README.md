@@ -24,6 +24,7 @@ Common startup options:
 
 ```bash
 py-web-ssh --host 127.0.0.1 --auto-port --launch-browser
+py-web-ssh --block-size 12KB
 py-web-ssh --pin 123456
 ```
 
@@ -39,4 +40,3 @@ py-web-ssh.exe --host 127.0.0.1 --auto-port --launch-browser
 - [SSH Algorithm Controls](docs/algorithms.md)
 - [API Reference](docs/api.md)
 - [Windows One-File Exe Build](docs/windows-build.md)
-

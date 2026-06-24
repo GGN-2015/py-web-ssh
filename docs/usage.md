@@ -46,6 +46,13 @@ Use `--auto-port` to try the configured `--port` first, then keep trying higher 
 py-web-ssh --host 127.0.0.1 --port 8022 --auto-port --launch-browser
 ```
 
+Use `--block-size` to set the initial upload command-size probe. Values accept bytes by default, or `B`, `KB`, `MB`, `GB`, and `TB` suffixes.
+
+```bash
+py-web-ssh --block-size 12KB
+py-web-ssh --block-size 2048
+```
+
 On Windows, a frozen one-file exe started without arguments behaves as if these options were supplied:
 
 ```bash
@@ -125,7 +132,7 @@ Uploads append base64 chunks to a temporary remote file, decode it into a tempor
 
 Before upload, the target path is probed. If the target is a remote directory, the browser-uploaded file's original name is placed inside it. If the target does not exist or is a regular file, the specified path is overwritten.
 
-The upload command-size probe starts at 1 MiB by default. The Files panel lets the user choose a positive integer value with `MB`, `KB`, or `B` units. The frontend clamps values below `64 B` to `64 B`; the backend also enforces a minimum of `64 B`. If the initial probe fails because the command is too large or the connection closes, py-web-ssh binary-searches downward and writes the selected size to the logs.
+The upload command-size probe starts at 1 MiB by default, or the value configured with `--block-size`. The Files panel lets the user choose a positive integer value with `TB`, `GB`, `MB`, `KB`, or `B` units. The frontend clamps values below `64 B` to `64 B`; the backend also enforces a minimum of `64 B`. If the initial probe fails because the command is too large or the connection closes, py-web-ssh binary-searches downward and writes the selected size to the logs.
 
 ## CWD Sync
 
@@ -142,4 +149,3 @@ The frontend loads xterm.js, the fit addon, and the serialize addon from jsDeliv
 ## Security Notes
 
 py-web-ssh is designed by default for trusted intranet or local use. Private keys and passphrases are kept only in process memory and are not written to logs. SSH agent authentication is disabled. If you expose the server to the public internet, add HTTPS, stronger login authentication, CSRF/origin restrictions, auditing, and session cleanup policies.
-

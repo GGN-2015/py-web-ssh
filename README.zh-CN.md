@@ -24,6 +24,7 @@ py-web-ssh
 
 ```bash
 py-web-ssh --host 127.0.0.1 --auto-port --launch-browser
+py-web-ssh --block-size 12KB
 py-web-ssh --pin 123456
 ```
 
@@ -39,4 +40,3 @@ py-web-ssh.exe --host 127.0.0.1 --auto-port --launch-browser
 - [SSH 算法控制](docs/algorithms.zh-CN.md)
 - [API 参考](docs/api.zh-CN.md)
 - [Windows 单文件 exe 打包](docs/windows-build.zh-CN.md)
-

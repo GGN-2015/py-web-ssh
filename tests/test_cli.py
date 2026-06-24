@@ -1,6 +1,8 @@
 import asyncio
 import socket
 
+import pytest
+
 from webssh.app import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -13,6 +15,7 @@ from webssh.app import (
     build_arg_parser,
 )
 import webssh.app as app_module
+from webssh.files import REQUESTED_UPLOAD_COMMAND_BYTES
 from webssh.runtime_config import DEFAULT_SUBTITLE, DEFAULT_TITLE
 
 
@@ -33,6 +36,8 @@ def test_cli_defaults_listen_on_all_interfaces_port_8022_and_default_branding() 
     assert args.ban_dns is False
     assert args.ban_ipv6 is False
     assert args.ban_host == []
+    assert args.block_size is None
+    assert REQUESTED_UPLOAD_COMMAND_BYTES == 1024 * 1024
 
 
 def test_cli_accepts_title_and_subtitle_arguments() -> None:
@@ -73,6 +78,27 @@ def test_cli_accepts_repeated_ban_host_arguments() -> None:
     )
 
     assert args.ban_host == ["internal.example.com", "*.corp.local"]
+
+
+def test_cli_accepts_block_size_argument_units() -> None:
+    cases = {
+        "2048": 2048,
+        "1024B": 1024,
+        "12KB": 12 * 1024,
+        "1MB": 1024 * 1024,
+        "2gb": 2 * 1024 * 1024 * 1024,
+        "1TB": 1024 * 1024 * 1024 * 1024,
+        "3 MB": 3 * 1024 * 1024,
+    }
+
+    for value, expected in cases.items():
+        args = build_arg_parser().parse_args(["--block-size", value])
+        assert args.block_size == expected
+
+
+def test_cli_rejects_invalid_block_size_units() -> None:
+    with pytest.raises(SystemExit):
+        build_arg_parser().parse_args(["--block-size", "12XB"])
 
 
 def test_python_package_empty_args_keep_original_defaults(monkeypatch) -> None:

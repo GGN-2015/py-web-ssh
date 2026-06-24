@@ -5,8 +5,13 @@ from fastapi.testclient import TestClient
 import webssh.app as app_module
 from webssh.app import app
 from webssh.models import ConnectRequest
+from webssh.runtime_config import configure_runtime_locks
 from webssh.session import SessionManager, TerminalSession
 from webssh.ssh_client import HostKeyInfo
+
+
+def teardown_function() -> None:
+    configure_runtime_locks()
 
 
 def fake_host_key() -> HostKeyInfo:
@@ -138,6 +143,47 @@ def test_upload_accepts_positive_probe_size_and_applies_minimum(monkeypatch) -> 
 
     assert response.status_code == 200
     assert captured["requested_command_size"] == 64
+
+
+def test_upload_uses_runtime_block_size_when_probe_size_is_omitted(monkeypatch) -> None:
+    configure_runtime_locks(upload_block_size_bytes=12 * 1024)
+    client = TestClient(app)
+    manager = SessionManager(autostart_reaper=False)
+    session = TerminalSession(ConnectRequest(host="example.com", username="root"))
+    manager._sessions[session.id] = session
+    session._confirmed_host_key = fake_host_key()
+    monkeypatch.setattr(app_module, "sessions", manager)
+    captured: dict[str, object] = {}
+
+    def fake_upload(
+        config,
+        source,
+        remote_path,
+        size,
+        expected_host_key,
+        requested_command_size,
+        original_filename=None,
+        cancel_event=None,
+        progress=None,
+        log=None,
+    ):
+        captured["requested_command_size"] = requested_command_size
+        payload = source.read()
+        return "shell", len(payload), remote_path
+
+    monkeypatch.setattr(app_module, "upload_file_via_ssh", fake_upload)
+
+    response = client.post(
+        f"/api/sessions/{session.id}/files/upload",
+        data={
+            "remote_path": "/tmp/example.txt",
+            "total_bytes": "5",
+        },
+        files={"file": ("example.txt", BytesIO(b"hello"), "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert captured["requested_command_size"] == 12 * 1024
 
 
 def test_upload_rejects_non_positive_probe_size(monkeypatch) -> None:

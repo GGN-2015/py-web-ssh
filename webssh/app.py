@@ -22,14 +22,17 @@ from .client_session import ensure_client_session_cookie
 from .files import (
     FileTransferCancelled,
     MIN_UPLOAD_COMMAND_BYTES,
-    REQUESTED_UPLOAD_COMMAND_BYTES,
     download_file_via_ssh,
     filename_for_download,
     remote_file_size_via_ssh,
     upload_file_via_ssh,
 )
 from .models import ConnectRequest, CreateSessionResponse, FileTransferResponse
-from .runtime_config import add_runtime_lock_arguments, configure_runtime_locks
+from .runtime_config import (
+    BLOCK_SIZE_MIN_WARNING,
+    add_runtime_lock_arguments,
+    configure_runtime_locks,
+)
 from . import runtime_config as runtime_config_module
 from .session import SessionManager
 from .ssh_client import supported_algorithms_payload, validate_disabled_algorithms
@@ -464,7 +467,7 @@ def _content_length(upload: UploadFile) -> int | None:
 
 def _normalize_upload_command_size(value: int | None) -> int:
     if value is None:
-        return REQUESTED_UPLOAD_COMMAND_BYTES
+        return runtime_config_module.runtime_config.upload_block_size_bytes
     if value < 1:
         raise HTTPException(
             status_code=422,
@@ -496,6 +499,8 @@ def main(argv: list[str] | None = None) -> None:
     args = build_arg_parser().parse_args(_effective_cli_args(argv))
 
     configure_pin(args.pin)
+    if args.block_size is not None and args.block_size <= MIN_UPLOAD_COMMAND_BYTES:
+        print(BLOCK_SIZE_MIN_WARNING, file=sys.stderr)
     configure_runtime_locks(
         title=args.title,
         subtitle=args.subtitle,
@@ -507,6 +512,7 @@ def main(argv: list[str] | None = None) -> None:
         ban_dns=args.ban_dns,
         ban_ipv6=args.ban_ipv6,
         ban_hosts=args.ban_host,
+        upload_block_size_bytes=args.block_size,
     )
     run_server(args.host, args.port, launch_browser=args.launch_browser, auto_port=args.auto_port)
 

@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 import webssh.app as app_module
 from webssh.app import app, build_arg_parser
 from webssh import __version__
-from webssh.runtime_config import configure_runtime_locks
+from webssh.files import REQUESTED_UPLOAD_COMMAND_BYTES
+from webssh.runtime_config import BLOCK_SIZE_MIN_WARNING, configure_runtime_locks
 from webssh.session import SessionManager
 
 
@@ -65,6 +66,7 @@ def test_public_config_never_exposes_locked_password_or_private_key_path(tmp_pat
     assert payload["locks"]["username"] == {"enabled": True, "value": "deploy"}
     assert payload["locks"]["password"] == {"enabled": True}
     assert payload["locks"]["private_key"] == {"enabled": True}
+    assert payload["upload"] == {"block_size_bytes": REQUESTED_UPLOAD_COMMAND_BYTES}
     assert "secret" not in str(payload)
     assert str(key_path) not in str(payload)
     assert "PRIVATE KEY TEXT" not in str(payload)
@@ -81,6 +83,46 @@ def test_public_config_exposes_custom_branding() -> None:
         "subtitle": "Production Access",
         "version": __version__,
     }
+
+
+def test_public_config_exposes_upload_block_size_default() -> None:
+    configure_runtime_locks(upload_block_size_bytes=12 * 1024)
+    client = TestClient(app)
+
+    payload = client.get("/api/config").json()
+
+    assert payload["upload"] == {"block_size_bytes": 12 * 1024}
+
+
+def test_runtime_upload_block_size_is_clamped_to_minimum() -> None:
+    configure_runtime_locks(upload_block_size_bytes=12)
+    client = TestClient(app)
+
+    payload = client.get("/api/config").json()
+
+    assert payload["upload"] == {"block_size_bytes": 64}
+
+
+def test_main_warns_and_clamps_tiny_block_size(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        app_module,
+        "run_server",
+        lambda host, port, launch_browser=False, auto_port=False: captured.update(
+            {
+                "host": host,
+                "port": port,
+                "launch_browser": launch_browser,
+                "auto_port": auto_port,
+            }
+        ),
+    )
+
+    app_module.main(["--block-size", "12B"])
+
+    assert captured["port"] == 8022
+    assert BLOCK_SIZE_MIN_WARNING in capsys.readouterr().err
+    assert app_module.runtime_config_module.runtime_config.upload_block_size_bytes == 64
 
 
 def test_index_renders_custom_branding_and_package_version() -> None:
