@@ -992,11 +992,16 @@ async function handleMessage(message) {
     appendLogLine(`${t("boundSession")} ${message.session_id}`);
   } else if (message.type === "replay") {
     await replayTerminal(message);
-    setSessionState(message.state);
+    const replayState = message.state || "";
+    setSessionState(replayState);
     setCwdSyncEnabled(message.cwd_sync !== false);
-    setShellReady(message.shell_ready === true);
-    setCurrentWorkingDirectory(message.cwd || "");
-    setDirectoryListing(message.directory_listing || [], message.directory_listing_error || "", false);
+    if (replayState === "closed") {
+      resetDirectoryState();
+    } else {
+      setShellReady(message.shell_ready === true);
+      setCurrentWorkingDirectory(message.cwd || "");
+      setDirectoryListing(message.directory_listing || [], message.directory_listing_error || "", false);
+    }
     if (message.warning) appendLogLine(message.warning);
     for (const entry of message.logs || []) appendLogEntry(entry);
   } else if (message.type === "output") {
@@ -1006,11 +1011,13 @@ async function handleMessage(message) {
   } else if (message.type === "cwd_sync") {
     setCwdSyncEnabled(message.enabled === true);
   } else if (message.type === "cwd") {
-    setCurrentWorkingDirectory(message.cwd || "");
+    if (currentSessionState !== "closed") setCurrentWorkingDirectory(message.cwd || "");
   } else if (message.type === "directory_listing") {
-    setDirectoryListing(message.entries || [], message.error || "", message.loading === true);
+    if (currentSessionState !== "closed") {
+      setDirectoryListing(message.entries || [], message.error || "", message.loading === true);
+    }
   } else if (message.type === "shell_ready") {
-    setShellReady(message.ready === true);
+    setShellReady(currentSessionState !== "closed" && message.ready === true);
   } else if (message.type === "log") {
     appendLogEntry(message.entry);
   } else if (message.type === "warning") {
@@ -1235,6 +1242,23 @@ function setDirectoryListing(entries, error, loading) {
   renderDirectoryPanel();
 }
 
+function resetDirectoryState() {
+  const previousDefault = uploadPathDefaultSource;
+  currentWorkingDirectory = "";
+  currentDirectoryInput.value = "";
+  directoryPanelCwd.value = "";
+  currentDirectoryEntries = [];
+  directoryListingError = "";
+  directoryListingLoading = false;
+  shellReady = false;
+  if (!uploadPathTouched || uploadPathInput.value.trim() === previousDefault) {
+    uploadPathInput.value = "";
+    uploadPathTouched = false;
+  }
+  uploadPathDefaultSource = "";
+  renderDirectoryPanel();
+}
+
 function renderDirectoryPanel() {
   directoryPanelCwd.value = cwdSyncEnabled ? currentWorkingDirectory : "";
   directoryUpButton.disabled = !directoryUpEnabled() || Boolean(activeDownload);
@@ -1328,7 +1352,11 @@ function setDirectoryPanelBusy(busy) {
 
 function setTerminalSessionState(state) {
   currentSessionState = state || "";
-  if (currentSessionState !== "connected") setShellReady(false);
+  if (currentSessionState === "closed") {
+    resetDirectoryState();
+  } else if (currentSessionState !== "connected") {
+    setShellReady(false);
+  }
   updateSessionActionButtons();
   updateTerminalGuard();
 }

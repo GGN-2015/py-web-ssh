@@ -199,6 +199,16 @@ def test_closed_non_empty_terminal_is_guarded_from_focus_and_clicks() -> None:
     assert "#terminal.terminal-disabled" in styles
     assert "function setSessionState(state)" in script
     assert 'currentSessionState === "closed" && terminalHasText()' in script
+    assert 'if (currentSessionState === "closed")' in script
+    assert "function resetDirectoryState()" in script
+    assert "currentDirectoryEntries = [];" in script
+    assert "directoryListingError = \"\";" in script
+    assert "directoryListingLoading = false;" in script
+    assert 'if (replayState === "closed")' in script
+    assert "resetDirectoryState();" in script
+    assert 'if (currentSessionState !== "closed") setCurrentWorkingDirectory(message.cwd || "");' in script
+    assert 'if (currentSessionState !== "closed") {' in script
+    assert 'setShellReady(currentSessionState !== "closed" && message.ready === true);' in script
     assert 'terminalGuardElement.hidden = !disabled;' in script
     assert 'terminalElement.classList.toggle("terminal-disabled", disabled);' in script
     assert 'focusTarget.setAttribute("tabindex", "-1");' in script
