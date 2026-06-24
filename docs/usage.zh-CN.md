@@ -118,7 +118,9 @@ py-web-ssh --ban-host secret.internal --ban-host "*.corp.local"
 
 ## 会话与重连
 
-创建会话会返回一个随机 SSH 会话 UUID。如果 WebSocket 断开，浏览器可以用同一个 UUID 重连。服务端会保存 SSH 输出流，浏览器也会定期发送 xterm serialize 快照；重连时会先恢复最新快照，再补放服务端保存的后续输出。
+创建会话会返回一个随机 SSH 会话 UUID。如果 WebSocket 断开，浏览器可以用同一个 UUID 重连。服务端会保存 SSH 输出流，浏览器也会定期发送 xterm serialize 快照；WebSocket 重连时会先恢复最新快照，再补放服务端保存的后续输出。
+
+`Reconnect` 按钮有两种模式。WebSocket 断开时，它会用同一个服务端 session UUID 重连浏览器到 WebAPP 服务端。WebSocket 正常且 SSH 会话为 connected 时，它会使用上一次连接表单 payload 创建一个新的 SSH 会话。该 payload 会用 Web Crypto 加密后保存在 `sessionStorage` 中，加密密钥只保存在当前浏览器标签页内存里。
 
 同一个 UUID 的所有浏览器连接都断开后，如果 5 分钟内无人重连，服务端会主动断开 SSH 并清理内存缓存。
 

@@ -118,7 +118,9 @@ py-web-ssh --ban-host secret.internal --ban-host "*.corp.local"
 
 ## Sessions And Reconnect
 
-Creating a session returns a random SSH session UUID. If the WebSocket disconnects, the browser can reconnect to the same UUID. The server stores the SSH output stream, and the browser periodically sends xterm serialize snapshots. On reconnect, the browser restores the latest snapshot first, then replays server-side output after that snapshot.
+Creating a session returns a random SSH session UUID. If the WebSocket disconnects, the browser can reconnect to the same UUID. The server stores the SSH output stream, and the browser periodically sends xterm serialize snapshots. On WebSocket reconnect, the browser restores the latest snapshot first, then replays server-side output after that snapshot.
+
+The `Reconnect` button has two modes. When the WebSocket is disconnected, it reconnects the browser to the same server-side session UUID. When the WebSocket is open and the SSH session is connected, it creates a fresh SSH session from the last connection form payload. That payload is encrypted with Web Crypto and stored only in `sessionStorage`; the encryption key is kept in memory for the current browser tab.
 
 If all browser connections for the same UUID disconnect and no one reconnects within 5 minutes, the server actively disconnects SSH and clears in-memory caches.
 

@@ -38,6 +38,9 @@ const cancelDownloadButton = document.querySelector("#cancel-download");
 const downloadForm = document.querySelector("#download-form");
 
 const LANGUAGE_COOKIE = "py_web_ssh_lang";
+const CONNECT_CONFIG_CACHE_KEY = "py_web_ssh_last_connect_config";
+const CONNECT_CONFIG_CRYPTO_ALGORITHM = "AES-GCM";
+const CONNECT_CONFIG_IV_BYTES = 12;
 const MIN_UPLOAD_PROBE_BYTES = 64;
 const UPLOAD_PROBE_UNIT_BYTES = {
   tb: 1024 * 1024 * 1024 * 1024,
@@ -108,6 +111,9 @@ const translations = {
     ipv6HostBlocked: "Server policy blocks IPv6 targets.",
     ready: "Ready",
     invalidPin: "Invalid PIN.",
+    reconnectingSsh: "Reconnecting SSH...",
+    reconnectFailed: "Reconnect failed",
+    reconnectConfigUnavailable: "Reconnect configuration is unavailable in this browser tab.",
     uploadNeedsInputs: "Upload requires a session UUID, remote path, and local file.",
     preparingUpload: "Preparing upload...",
     uploading: "Uploading...",
@@ -202,6 +208,9 @@ const translations = {
     ipv6HostBlocked: "服务端策略禁止使用 IPv6 目标。",
     ready: "就绪",
     invalidPin: "PIN 不正确。",
+    reconnectingSsh: "正在重连 SSH...",
+    reconnectFailed: "重连失败",
+    reconnectConfigUnavailable: "当前浏览器标签页中没有可用的重连配置。",
     uploadNeedsInputs: "上传需要会话 UUID、远端路径和本地文件。",
     preparingUpload: "准备上传...",
     uploading: "上传中...",
@@ -286,6 +295,7 @@ let snapshotTimer = null;
 let activeUpload = null;
 let currentStatusKind = "";
 let currentSessionState = "";
+let currentWebSocketState = "idle";
 let currentWorkingDirectory = "";
 let cwdSyncEnabled = true;
 let uploadPathDefaultSource = "";
@@ -294,7 +304,11 @@ let currentDirectoryEntries = [];
 let directoryListingLoading = false;
 let directoryListingError = "";
 let activeDownload = null;
+let reconnectConfigKeyPromise = null;
+let encryptedConnectConfigAvailable = false;
+let reconnectInProgress = false;
 
+sessionStorage.removeItem(CONNECT_CONFIG_CACHE_KEY);
 applyLanguage(currentLanguage);
 initialize();
 bindControlPanels();
@@ -302,6 +316,7 @@ bindControlPanels();
 if (activeSessionId) {
   sessionInput.value = activeSessionId;
   updateSessionUi(activeSessionId);
+  updateSessionActionButtons();
 }
 
 window.addEventListener("resize", () => {
@@ -314,6 +329,7 @@ languageToggle.addEventListener("click", () => {
 });
 uploadProbeSizeInput.addEventListener("blur", normalizeUploadProbeSize);
 uploadProbeUnitSelect.addEventListener("change", normalizeUploadProbeSize);
+sessionInput.addEventListener("input", updateSessionActionButtons);
 uploadPathInput.addEventListener("input", () => {
   uploadPathTouched = uploadPathInput.value.trim() !== uploadPathDefaultSource;
 });
@@ -358,22 +374,14 @@ document.querySelector("#connect-form").addEventListener("submit", async (event)
     return;
   }
 
-  const response = await fetch("/api/sessions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    appendLogLine(`${t("createSessionFailed")}: ${await response.text()}`);
+  try {
+    const result = await createSshSession(payload);
+    await rememberConnectPayload(payload);
+    activateSession(result.session_id);
+  } catch (error) {
+    appendLogLine(`${t("createSessionFailed")}: ${error}`);
     setStatus(t("createFailed"));
-    return;
   }
-  const result = await response.json();
-  activeSessionId = result.session_id;
-  localStorage.setItem("py-web-ssh-session", activeSessionId);
-  sessionInput.value = activeSessionId;
-  updateSessionUi(activeSessionId);
-  connectWebSocket(activeSessionId);
 });
 
 pinForm.addEventListener("submit", async (event) => {
@@ -396,21 +404,18 @@ pinForm.addEventListener("submit", async (event) => {
   await loadAlgorithms();
 });
 
-reconnectButton.addEventListener("click", () => {
-  if (!sessionActionsEnabled()) {
-    return;
-  }
-  const id = sessionInput.value.trim();
-  if (id) {
-    activeSessionId = id;
-    localStorage.setItem("py-web-ssh-session", id);
-    updateSessionUi(id);
-    connectWebSocket(id);
+reconnectButton.addEventListener("click", async () => {
+  const mode = reconnectActionMode();
+  if (!mode || reconnectInProgress) return;
+  if (mode === "websocket") {
+    reconnectWebSocketSession();
+  } else if (mode === "ssh") {
+    await reconnectSshSession();
   }
 });
 
 disconnectButton.addEventListener("click", () => {
-  if (sessionActionsEnabled() && ws && ws.readyState === WebSocket.OPEN) {
+  if (disconnectActionEnabled() && ws && ws.readyState === WebSocket.OPEN) {
     sendSnapshot();
     ws.send(JSON.stringify({ type: "disconnect" }));
   }
@@ -643,11 +648,66 @@ function closeControlPanels() {
   });
 }
 
+async function createSshSession(payload) {
+  const response = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return await response.json();
+}
+
+function activateSession(sessionId) {
+  activeSessionId = sessionId;
+  localStorage.setItem("py-web-ssh-session", activeSessionId);
+  sessionInput.value = activeSessionId;
+  updateSessionUi(activeSessionId);
+  connectWebSocket(activeSessionId);
+}
+
+function reconnectWebSocketSession() {
+  const id = sessionInput.value.trim() || activeSessionId;
+  if (!id) return;
+  activeSessionId = id;
+  localStorage.setItem("py-web-ssh-session", id);
+  updateSessionUi(id);
+  connectWebSocket(id);
+}
+
+async function reconnectSshSession() {
+  reconnectInProgress = true;
+  updateSessionActionButtons();
+  setStatus(t("reconnectingSsh"));
+  try {
+    const payload = await readRememberedConnectPayload();
+    if (!payload) {
+      appendLogLine(t("reconnectConfigUnavailable"));
+      setStatus(t("reconnectFailed"));
+      return;
+    }
+    if (activeSessionId) {
+      await fetch(`/api/sessions/${activeSessionId}`, { method: "DELETE" });
+    }
+    const result = await createSshSession(payload);
+    activateSession(result.session_id);
+  } catch (error) {
+    appendLogLine(`${t("reconnectFailed")}: ${error}`);
+    setStatus(t("reconnectFailed"));
+  } finally {
+    reconnectInProgress = false;
+    updateSessionActionButtons();
+  }
+}
+
 function connectWebSocket(sessionId) {
   if (ws) {
     sendSnapshot();
     ws.close();
   }
+  setWebSocketState("connecting");
   setTerminalSessionState("");
   setCurrentWorkingDirectory("");
   setDirectoryListing([], "", false);
@@ -658,6 +718,7 @@ function connectWebSocket(sessionId) {
   ws = socket;
   socket.addEventListener("open", () => {
     if (ws !== socket) return;
+    setWebSocketState("open");
     setStatus(t("webSocketConnected"));
     sendResize();
   });
@@ -668,10 +729,14 @@ function connectWebSocket(sessionId) {
   });
   socket.addEventListener("close", () => {
     if (ws !== socket) return;
+    setWebSocketState("closed");
     setStatus(t("webSocketClosed"));
   });
   socket.addEventListener("error", () => {
-    if (ws === socket) setStatus(t("webSocketError"));
+    if (ws === socket) {
+      setWebSocketState("closed");
+      setStatus(t("webSocketError"));
+    }
   });
 }
 
@@ -927,6 +992,70 @@ async function readPrivateKey() {
   return file ? await file.text() : "";
 }
 
+async function rememberConnectPayload(payload) {
+  try {
+    if (!window.crypto || !window.crypto.subtle) {
+      encryptedConnectConfigAvailable = false;
+      updateSessionActionButtons();
+      return;
+    }
+    const key = await connectConfigKey();
+    const iv = window.crypto.getRandomValues(new Uint8Array(CONNECT_CONFIG_IV_BYTES));
+    const encoded = new TextEncoder().encode(JSON.stringify(payload));
+    const encrypted = await window.crypto.subtle.encrypt(
+      { name: CONNECT_CONFIG_CRYPTO_ALGORITHM, iv },
+      key,
+      encoded,
+    );
+    sessionStorage.setItem(
+      CONNECT_CONFIG_CACHE_KEY,
+      JSON.stringify({
+        iv: bytesToBase64(iv),
+        payload: bytesToBase64(new Uint8Array(encrypted)),
+      }),
+    );
+    encryptedConnectConfigAvailable = true;
+  } catch (error) {
+    appendLogLine(`${t("reconnectConfigUnavailable")}: ${error}`);
+    encryptedConnectConfigAvailable = false;
+  }
+  updateSessionActionButtons();
+}
+
+async function readRememberedConnectPayload() {
+  const item = sessionStorage.getItem(CONNECT_CONFIG_CACHE_KEY);
+  if (!item || !reconnectConfigKeyPromise) {
+    return null;
+  }
+  try {
+    const cached = JSON.parse(item);
+    const key = await connectConfigKey();
+    const decrypted = await window.crypto.subtle.decrypt(
+      { name: CONNECT_CONFIG_CRYPTO_ALGORITHM, iv: base64ToBytes(cached.iv) },
+      key,
+      base64ToBytes(cached.payload),
+    );
+    return JSON.parse(new TextDecoder().decode(decrypted));
+  } catch (error) {
+    appendLogLine(`${t("reconnectConfigUnavailable")}: ${error}`);
+    sessionStorage.removeItem(CONNECT_CONFIG_CACHE_KEY);
+    encryptedConnectConfigAvailable = false;
+    updateSessionActionButtons();
+    return null;
+  }
+}
+
+function connectConfigKey() {
+  if (!reconnectConfigKeyPromise) {
+    reconnectConfigKeyPromise = window.crypto.subtle.generateKey(
+      { name: CONNECT_CONFIG_CRYPTO_ALGORITHM, length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    );
+  }
+  return reconnectConfigKeyPromise;
+}
+
 function updateSessionUi(sessionId) {
   sessionLabel.textContent = sessionId ? `UUID ${sessionId}` : "";
   logsLink.href = sessionId ? `/sessions/${sessionId}/logs` : "#";
@@ -1085,14 +1214,30 @@ function setTerminalSessionState(state) {
   updateTerminalGuard();
 }
 
-function updateSessionActionButtons() {
-  const enabled = sessionActionsEnabled();
-  reconnectButton.disabled = !enabled;
-  disconnectButton.disabled = !enabled;
+function setWebSocketState(state) {
+  currentWebSocketState = state;
+  updateSessionActionButtons();
 }
 
-function sessionActionsEnabled() {
-  return currentSessionState === "connected";
+function updateSessionActionButtons() {
+  reconnectButton.disabled = reconnectActionMode() === "";
+  disconnectButton.disabled = !disconnectActionEnabled();
+}
+
+function reconnectActionMode() {
+  if (reconnectInProgress) return "";
+  const hasSessionId = Boolean((sessionInput.value.trim() || activeSessionId));
+  if (hasSessionId && ["closed", "idle"].includes(currentWebSocketState)) {
+    return "websocket";
+  }
+  if (currentWebSocketState === "open" && currentSessionState === "connected" && encryptedConnectConfigAvailable) {
+    return "ssh";
+  }
+  return "";
+}
+
+function disconnectActionEnabled() {
+  return currentWebSocketState === "open" && currentSessionState === "connected";
 }
 
 function updateTerminalGuard() {

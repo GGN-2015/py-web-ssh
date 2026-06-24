@@ -203,7 +203,7 @@ def test_closed_non_empty_terminal_is_guarded_from_focus_and_clicks() -> None:
     assert "setTerminalSessionState(\"\");" in script
 
 
-def test_session_action_buttons_only_enable_when_connected() -> None:
+def test_reconnect_button_supports_websocket_and_ssh_reconnect_modes() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")
 
@@ -211,12 +211,35 @@ def test_session_action_buttons_only_enable_when_connected() -> None:
     assert 'id="disconnect" type="button" data-i18n="disconnect" disabled' in markup
     assert 'const reconnectButton = document.querySelector("#reconnect");' in script
     assert 'const disconnectButton = document.querySelector("#disconnect");' in script
+    assert 'let currentWebSocketState = "idle";' in script
+    assert "updateSessionActionButtons();" in script
     assert "function updateSessionActionButtons()" in script
-    assert 'return currentSessionState === "connected";' in script
-    assert "reconnectButton.disabled = !enabled;" in script
-    assert "disconnectButton.disabled = !enabled;" in script
-    assert "if (!sessionActionsEnabled())" in script
-    assert "if (sessionActionsEnabled() && ws && ws.readyState === WebSocket.OPEN)" in script
+    assert "function reconnectActionMode()" in script
+    assert 'return "websocket";' in script
+    assert 'return "ssh";' in script
+    assert 'const mode = reconnectActionMode();' in script
+    assert "reconnectWebSocketSession();" in script
+    assert "await reconnectSshSession();" in script
+    assert "function disconnectActionEnabled()" in script
+    assert '["closed", "idle"].includes(currentWebSocketState)' in script
+    assert 'return currentWebSocketState === "open" && currentSessionState === "connected";' in script
+    assert "disconnectButton.disabled = !disconnectActionEnabled();" in script
+    assert "if (disconnectActionEnabled() && ws && ws.readyState === WebSocket.OPEN)" in script
+
+
+def test_frontend_encrypts_cached_connect_config_for_ssh_reconnect() -> None:
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'const CONNECT_CONFIG_CACHE_KEY = "py_web_ssh_last_connect_config";' in script
+    assert 'const CONNECT_CONFIG_CRYPTO_ALGORITHM = "AES-GCM";' in script
+    assert "window.crypto.subtle.encrypt" in script
+    assert "window.crypto.subtle.decrypt" in script
+    assert "sessionStorage.setItem(" in script
+    assert "JSON.stringify(payload)" in script
+    assert "sessionStorage.removeItem(CONNECT_CONFIG_CACHE_KEY);" in script
+    assert "appendLogLine(`${t(\"reconnectConfigUnavailable\")}: ${error}`);" in script
+    assert "await rememberConnectPayload(payload);" in script
+    assert "const payload = await readRememberedConnectPayload();" in script
 
 
 def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() -> None:
