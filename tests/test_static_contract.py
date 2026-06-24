@@ -48,6 +48,18 @@ def test_frontend_defaults_to_english_and_has_language_cookie() -> None:
     assert "zh-CN" in script
 
 
+def test_frontend_retranslates_dynamic_session_state_status() -> None:
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'sessionState_connected: "connected"' in script
+    assert 'sessionState_connected: "已连接"' in script
+    assert 'let currentStatusKind = "";' in script
+    assert "function renderSessionStateStatus()" in script
+    assert 'currentStatusKind = "sessionState";' in script
+    assert 'if (currentStatusKind === "sessionState")' in script
+    assert "renderSessionStateStatus();" in script
+
+
 def test_frontend_branding_comes_from_server_config_and_not_i18n() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")

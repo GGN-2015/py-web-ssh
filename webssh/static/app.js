@@ -132,6 +132,12 @@ const translations = {
     webSocketError: "WebSocket error",
     boundSession: "Bound session",
     sessionState: "Session state",
+    sessionState_connecting: "connecting",
+    sessionState_waiting_host_key: "waiting for host key",
+    sessionState_connected: "connected",
+    sessionState_closing: "closing",
+    sessionState_closed: "closed",
+    sessionState_error: "error",
     lockedConfigFailed: "Could not load server configuration.",
     languageButton: "中文",
   },
@@ -220,6 +226,12 @@ const translations = {
     webSocketError: "WebSocket 错误",
     boundSession: "绑定会话",
     sessionState: "会话状态",
+    sessionState_connecting: "连接中",
+    sessionState_waiting_host_key: "等待主机密钥确认",
+    sessionState_connected: "已连接",
+    sessionState_closing: "正在关闭",
+    sessionState_closed: "已关闭",
+    sessionState_error: "错误",
     lockedConfigFailed: "无法加载服务端配置。",
     languageButton: "English",
   },
@@ -270,6 +282,7 @@ let activeSessionId = localStorage.getItem("py-web-ssh-session") || "";
 let lastAppliedSeq = 0;
 let snapshotTimer = null;
 let activeUpload = null;
+let currentStatusKind = "";
 let currentSessionState = "";
 let currentWorkingDirectory = "";
 let cwdSyncEnabled = true;
@@ -916,8 +929,21 @@ function updateSessionUi(sessionId) {
 }
 
 function setSessionState(state) {
-  setStatus(`${t("sessionState")}: ${state}`);
   setTerminalSessionState(state);
+  renderSessionStateStatus();
+}
+
+function renderSessionStateStatus() {
+  if (!currentSessionState) return;
+  statusElement.textContent = `${t("sessionState")}: ${translatedSessionState(currentSessionState)}`;
+  statusElement.removeAttribute("data-i18n");
+  currentStatusKind = "sessionState";
+}
+
+function translatedSessionState(state) {
+  const key = `sessionState_${state}`;
+  const value = t(key);
+  return value === key ? state : value;
 }
 
 function setCurrentWorkingDirectory(cwd) {
@@ -1089,6 +1115,7 @@ function setTerminalFocusDisabled(disabled) {
 }
 
 function setStatus(text) {
+  currentStatusKind = "";
   statusElement.textContent = text;
   statusElement.removeAttribute("data-i18n");
 }
@@ -1357,7 +1384,9 @@ function applyLanguage(language) {
   setUploadActionState(cancelUploadButton.dataset.uploadActionState || "cancel");
   cancelDownloadButton.textContent = t("cancelDownload");
   renderDirectoryPanel();
-  if (statusElement.getAttribute("data-i18n") === "notConnected") {
+  if (currentStatusKind === "sessionState") {
+    renderSessionStateStatus();
+  } else if (statusElement.getAttribute("data-i18n") === "notConnected") {
     statusElement.textContent = t("notConnected");
   }
   if (algorithmCatalog.length) {
