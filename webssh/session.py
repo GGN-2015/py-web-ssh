@@ -27,18 +27,23 @@ CWD_LISTING_OSC_PREFIX = b"\x1b]6970;ls;"
 CWD_READY_OSC_PREFIX = b"\x1b]6970;ready;"
 CWD_OSC_SUFFIX = b"\x07"
 CWD_TOKEN_PLACEHOLDER = "__PY_WEB_SSH_CWD_TOKEN__"
+MAX_HIDDEN_COMMAND_LENGTH = 1024
 CWD_REPORT_FUNCTION = "__py_web_ssh_cwd_report"
 CWD_LIST_FUNCTION = "__py_web_ssh_cwd_list"
 CWD_READY_FUNCTION = "__py_web_ssh_cwd_ready"
-CWD_INSTALL_COMMAND_TEMPLATE = (
+CWD_INSTALL_COMMAND_TEMPLATES = (
+    "__py_web_ssh_cwd_armed=; "
     "__py_web_ssh_cwd_ready(){ "
+    "[ -n \"${__py_web_ssh_cwd_armed-}\" ] || return; "
     "printf '\\033]6970;ready;" + CWD_TOKEN_PLACEHOLDER + "=1\\007' >&2; "
-    "}; "
+    "}",
     "__py_web_ssh_cwd_list(){ "
+    "[ -n \"${__py_web_ssh_cwd_armed-}\" ] || return; "
     "__py_web_ssh_cwd_ls=$(LC_ALL=C command ls -al 2>&1 | command base64 | command tr -d '\\r\\n') || __py_web_ssh_cwd_ls=; "
     "printf '\\033]6970;ls;" + CWD_TOKEN_PLACEHOLDER + "=%s\\007' \"$__py_web_ssh_cwd_ls\" >&2; "
-    "}; "
+    "}",
     "__py_web_ssh_cwd_report(){ "
+    "[ -n \"${__py_web_ssh_cwd_armed-}\" ] || return; "
     "__py_web_ssh_cwd_now=$(command pwd 2>/dev/null || printf '%s' \"$PWD\") || return; "
     "if [ \"${__py_web_ssh_cwd_now}\" != \"${__py_web_ssh_cwd_last-}\" ]; then "
     "__py_web_ssh_cwd_last=$__py_web_ssh_cwd_now; "
@@ -46,7 +51,7 @@ CWD_INSTALL_COMMAND_TEMPLATE = (
     "__py_web_ssh_cwd_list; "
     "fi; "
     "__py_web_ssh_cwd_ready; "
-    "}; "
+    "}",
     "if [ -n \"${BASH_VERSION:-}\" ]; then "
     "PROMPT_COMMAND=\"__py_web_ssh_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"; "
     "elif [ -n \"${ZSH_VERSION:-}\" ]; then "
@@ -58,6 +63,26 @@ CWD_INSTALL_COMMAND_TEMPLATE = (
     "PS2='${__py_web_ssh_cwd_prompt:-$(__py_web_ssh_cwd_report)}'\"${PS2-}\"; "
     "fi"
 )
+CWD_INITIAL_REPORT_COMMAND_TEMPLATE = "__py_web_ssh_cwd_armed=1; " + CWD_REPORT_FUNCTION
+CWD_INITIAL_READY_COMMAND_TEMPLATE = "__py_web_ssh_cwd_armed=1; " + CWD_READY_FUNCTION
+CWD_INSTALL_COMMAND_TEMPLATE = "; ".join(CWD_INSTALL_COMMAND_TEMPLATES)
+
+
+def cwd_install_commands(token: str, cwd_sync_enabled: bool) -> list[str]:
+    commands = [
+        command.replace(CWD_TOKEN_PLACEHOLDER, token)
+        for command in CWD_INSTALL_COMMAND_TEMPLATES
+    ]
+    final_command = (
+        CWD_INITIAL_REPORT_COMMAND_TEMPLATE
+        if cwd_sync_enabled
+        else CWD_INITIAL_READY_COMMAND_TEMPLATE
+    )
+    commands.append(final_command.replace(CWD_TOKEN_PLACEHOLDER, token))
+    too_long = [command for command in commands if len(command.encode("utf-8")) > MAX_HIDDEN_COMMAND_LENGTH]
+    if too_long:
+        raise ValueError("A hidden SSH command exceeds the 1024 byte limit.")
+    return commands
 
 
 @dataclass(eq=False)
@@ -364,17 +389,19 @@ class TerminalSession:
 
     def _install_cwd_monitor(self) -> None:
         try:
-            command = CWD_INSTALL_COMMAND_TEMPLATE
-            if self._cwd_sync_enabled:
-                command = f"{command}; {CWD_REPORT_FUNCTION}"
-            command = command.replace(CWD_TOKEN_PLACEHOLDER, self._cwd_token)
-            self._send_hidden_terminal_command(command)
+            self._send_hidden_terminal_commands(
+                cwd_install_commands(self._cwd_token, self._cwd_sync_enabled)
+            )
         except Exception as exc:
             self.log("warning", f"Could not start remote working-directory monitor: {exc}", None)
 
     def _send_hidden_terminal_command(self, command: str) -> None:
-        echo = command.encode("utf-8")
-        payload = echo + b"\n"
+        self._send_hidden_terminal_commands([command])
+
+    def _send_hidden_terminal_commands(self, commands: list[str]) -> None:
+        if not commands:
+            return
+        payload = "".join(f"{command}\n" for command in commands).encode("utf-8")
         with self._channel_lock:
             if self._channel is None or self.state != "connected":
                 return

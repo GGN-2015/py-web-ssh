@@ -7,8 +7,10 @@ from webssh.session import (
     CWD_OSC_PREFIX,
     CWD_LISTING_OSC_PREFIX,
     CWD_OSC_SUFFIX,
+    MAX_HIDDEN_COMMAND_LENGTH,
     SessionManager,
     TerminalSession,
+    cwd_install_commands,
     parse_ls_al_listing,
 )
 from webssh.ssh_client import HostKeyInfo
@@ -263,6 +265,41 @@ def test_send_hidden_terminal_command_starts_hidden_transaction_without_stty() -
     session._send_hidden_terminal_command("secret command")
 
     assert channel.sent == [b"secret command\n"]
+    assert session._hidden_terminal_transaction_active is True
+    assert session._hidden_command_echoes == []
+
+
+def test_cwd_monitor_hidden_install_commands_are_split_under_1024_bytes() -> None:
+    token = "a" * 32
+
+    commands = cwd_install_commands(token, cwd_sync_enabled=True)
+
+    assert len("; ".join(commands).encode("utf-8")) > MAX_HIDDEN_COMMAND_LENGTH
+    assert all(len(command.encode("utf-8")) <= MAX_HIDDEN_COMMAND_LENGTH for command in commands)
+    assert commands[-1] == "__py_web_ssh_cwd_armed=1; __py_web_ssh_cwd_report"
+
+
+def test_install_cwd_monitor_sends_split_commands_as_one_hidden_transaction() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+
+    session._install_cwd_monitor()
+
+    assert len(channel.sent) == 1
+    lines = channel.sent[0].decode("utf-8").splitlines()
+    assert lines == cwd_install_commands(session._cwd_token, cwd_sync_enabled=True)
+    assert all(len(line.encode("utf-8")) <= MAX_HIDDEN_COMMAND_LENGTH for line in lines)
     assert session._hidden_terminal_transaction_active is True
     assert session._hidden_command_echoes == []
 

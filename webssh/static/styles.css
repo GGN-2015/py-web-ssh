@@ -609,6 +609,13 @@ progress {
   padding: 0 10px;
 }
 
+#directory-up-button {
+  border-color: #ff404c;
+  background:
+    linear-gradient(180deg, #7e1c22, #3d0f13);
+  color: #fff0f1;
+}
+
 .directory-panel.collapsed .directory-panel-body {
   display: none;
 }
@@ -683,6 +690,13 @@ progress {
   color: #efffed;
   padding: 0 8px;
   font-size: 12px;
+}
+
+.directory-enter-button {
+  border-color: #38b7ff;
+  background:
+    linear-gradient(180deg, #236f91, #0c3852);
+  color: #e7f8ff;
 }
 
 .terminal-guard {

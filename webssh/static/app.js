@@ -58,6 +58,7 @@ const translations = {
     unlock: "Unlock",
     connect: "Connect",
     algorithms: "Algorithms",
+    algos: "Algos",
     session: "Session",
     files: "Files",
     host: "Target host",
@@ -160,6 +161,7 @@ const translations = {
     unlock: "解锁",
     connect: "连接",
     algorithms: "算法",
+    algos: "算法",
     session: "会话",
     files: "文件",
     host: "目标服务器",
@@ -1223,6 +1225,7 @@ function renderDirectoryRow(entry) {
   button.type = "button";
   button.className = "directory-download-button";
   if (entry.type === "directory") {
+    button.classList.add("directory-enter-button");
     button.textContent = t("enterDirectory");
     button.disabled = !directoryEnterEnabled() || Boolean(activeDownload);
     button.addEventListener("click", () => enterDirectory(entry));
