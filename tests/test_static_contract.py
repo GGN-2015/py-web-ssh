@@ -203,6 +203,22 @@ def test_closed_non_empty_terminal_is_guarded_from_focus_and_clicks() -> None:
     assert "setTerminalSessionState(\"\");" in script
 
 
+def test_session_action_buttons_only_enable_when_connected() -> None:
+    markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
+    script = Path("webssh/static/app.js").read_text(encoding="utf-8")
+
+    assert 'id="reconnect" type="button" data-i18n="reconnect" disabled' in markup
+    assert 'id="disconnect" type="button" data-i18n="disconnect" disabled' in markup
+    assert 'const reconnectButton = document.querySelector("#reconnect");' in script
+    assert 'const disconnectButton = document.querySelector("#disconnect");' in script
+    assert "function updateSessionActionButtons()" in script
+    assert 'return currentSessionState === "connected";' in script
+    assert "reconnectButton.disabled = !enabled;" in script
+    assert "disconnectButton.disabled = !enabled;" in script
+    assert "if (!sessionActionsEnabled())" in script
+    assert "if (sessionActionsEnabled() && ws && ws.readyState === WebSocket.OPEN)" in script
+
+
 def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() -> None:
     markup = Path("webssh/static/index.html").read_text(encoding="utf-8")
     styles = Path("webssh/static/styles.css").read_text(encoding="utf-8")

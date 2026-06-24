@@ -9,6 +9,8 @@ const pinForm = document.querySelector("#pin-form");
 const pinInput = document.querySelector("#pin-input");
 const pinError = document.querySelector("#pin-error");
 const panelToggles = document.querySelectorAll(".panel-toggle");
+const reconnectButton = document.querySelector("#reconnect");
+const disconnectButton = document.querySelector("#disconnect");
 const uploadProgress = document.querySelector("#upload-progress");
 const uploadProgressText = document.querySelector("#upload-progress-text");
 const uploadProgressBar = document.querySelector("#upload-progress-bar");
@@ -395,7 +397,10 @@ pinForm.addEventListener("submit", async (event) => {
   await loadAlgorithms();
 });
 
-document.querySelector("#reconnect").addEventListener("click", () => {
+reconnectButton.addEventListener("click", () => {
+  if (!sessionActionsEnabled()) {
+    return;
+  }
   const id = sessionInput.value.trim();
   if (id) {
     activeSessionId = id;
@@ -405,8 +410,8 @@ document.querySelector("#reconnect").addEventListener("click", () => {
   }
 });
 
-document.querySelector("#disconnect").addEventListener("click", () => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
+disconnectButton.addEventListener("click", () => {
+  if (sessionActionsEnabled() && ws && ws.readyState === WebSocket.OPEN) {
     sendSnapshot();
     ws.send(JSON.stringify({ type: "disconnect" }));
   }
@@ -1077,7 +1082,18 @@ function setDirectoryPanelBusy(busy) {
 
 function setTerminalSessionState(state) {
   currentSessionState = state || "";
+  updateSessionActionButtons();
   updateTerminalGuard();
+}
+
+function updateSessionActionButtons() {
+  const enabled = sessionActionsEnabled();
+  reconnectButton.disabled = !enabled;
+  disconnectButton.disabled = !enabled;
+}
+
+function sessionActionsEnabled() {
+  return currentSessionState === "connected";
 }
 
 function updateTerminalGuard() {
