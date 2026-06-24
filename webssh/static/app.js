@@ -107,6 +107,8 @@ const translations = {
     deleteFile: "Delete",
     deleteFileTitle: "Delete file?",
     deleteFileMessage: 'Delete "{name}" from the remote directory?',
+    deleteDirectoryTitle: "Delete directory?",
+    deleteDirectoryMessage: 'Delete directory "{name}" and all of its contents?',
     confirmDelete: "Delete",
     cancel: "Cancel",
     shellNotReady: "Shell prompt is not ready.",
@@ -216,6 +218,8 @@ const translations = {
     deleteFile: "删除",
     deleteFileTitle: "删除文件？",
     deleteFileMessage: "要从远端目录删除“{name}”吗？",
+    deleteDirectoryTitle: "删除目录？",
+    deleteDirectoryMessage: "要删除目录“{name}”及其全部内容吗？",
     confirmDelete: "删除",
     cancel: "取消",
     shellNotReady: "Shell 提示符尚未就绪。",
@@ -593,9 +597,10 @@ function enterParentDirectory() {
 
 async function deleteDirectoryFile(entry) {
   if (!directoryDeleteEnabled(entry) || activeDownload) return;
+  const isDirectory = entry.type === "directory";
   const confirmed = await showConfirmDialog({
-    title: t("deleteFileTitle"),
-    message: t("deleteFileMessage").replace("{name}", entry.name || ""),
+    title: t(isDirectory ? "deleteDirectoryTitle" : "deleteFileTitle"),
+    message: t(isDirectory ? "deleteDirectoryMessage" : "deleteFileMessage").replace("{name}", entry.name || ""),
     confirmText: t("confirmDelete"),
     cancelText: t("cancel"),
   });
@@ -1322,6 +1327,11 @@ function renderDirectoryRow(entry) {
     button.disabled = !directoryEnterEnabled() || Boolean(activeDownload);
     button.addEventListener("click", () => enterDirectory(entry));
     actionRow.appendChild(button);
+    const deleteButton = directoryActionButton("directory-delete-button");
+    deleteButton.textContent = t("deleteFile");
+    deleteButton.disabled = !directoryDeleteEnabled(entry) || Boolean(activeDownload);
+    deleteButton.addEventListener("click", () => deleteDirectoryFile(entry));
+    actionRow.appendChild(deleteButton);
   } else {
     button.textContent = t("download");
     button.disabled = !entry.downloadable || Boolean(activeDownload);
@@ -1388,7 +1398,7 @@ function directoryEnterEnabled() {
 }
 
 function directoryDeleteEnabled(entry) {
-  return Boolean(entry && entry.type !== "directory" && directoryEnterEnabled());
+  return Boolean(entry && directoryEnterEnabled());
 }
 
 function directoryUpEnabled() {

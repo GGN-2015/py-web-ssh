@@ -514,7 +514,7 @@ def test_delete_file_requires_shell_prompt_ready() -> None:
         raise AssertionError("Expected RuntimeError")
 
 
-def test_delete_file_rejects_directory_entries() -> None:
+def test_delete_file_rejects_missing_entries() -> None:
     session = TerminalSession(
         ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
     )
@@ -524,9 +524,9 @@ def test_delete_file_rejects_directory_entries() -> None:
     session._current_directory_listing = [{"name": "src", "type": "directory"}]
 
     try:
-        session.delete_file("src")
+        session.delete_file("missing")
     except ValueError as exc:
-        assert "file entry" in str(exc).lower()
+        assert "directory entry" in str(exc).lower()
     else:
         raise AssertionError("Expected ValueError")
 
@@ -552,6 +552,31 @@ def test_delete_file_sends_visible_rm_for_file_entry() -> None:
     session.delete_file("it'works.log")
 
     assert channel.sent == [b"rm -- 'it'\"'\"'works.log'\r"]
+    assert session.replay_payload()["shell_ready"] is False
+    assert session._refresh_directory_listing_when_shell_ready is True
+
+
+def test_delete_file_sends_visible_rm_rf_for_directory_entry() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_directory_listing = [{"name": "src dir", "type": "directory"}]
+
+    session.delete_file("src dir")
+
+    assert channel.sent == [b"rm -rf -- 'src dir'\r"]
     assert session.replay_payload()["shell_ready"] is False
     assert session._refresh_directory_listing_when_shell_ready is True
 

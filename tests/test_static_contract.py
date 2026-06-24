@@ -304,6 +304,8 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'deleteFile: "Delete"' in script
     assert 'deleteFile: "删除"' in script
     assert 'deleteFileMessage: ' in script
+    assert 'deleteDirectoryTitle: "Delete directory?"' in script
+    assert 'deleteDirectoryMessage: ' in script
     assert 'message.type === "directory_listing"' in script
     assert 'message.type === "shell_ready"' in script
     assert "function enterDirectory(entry)" in script
@@ -316,6 +318,9 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'ws.send(JSON.stringify({ type: "enter_parent_directory" }));' in script
     assert 'ws.send(JSON.stringify({ type: "delete_file", name: entry.name || "" }));' in script
     assert 'setShellReady(false);' in script
+    assert 'const isDirectory = entry.type === "directory";' in script
+    assert 't(isDirectory ? "deleteDirectoryTitle" : "deleteFileTitle")' in script
+    assert 't(isDirectory ? "deleteDirectoryMessage" : "deleteFileMessage").replace("{name}", entry.name || "")' in script
     assert "function renderDirectoryPanel()" in script
     assert "function isHiddenDirectoryEntry(entry)" in script
     assert "currentDirectoryEntries.filter((entry) => !isHiddenDirectoryEntry(entry))" in script
