@@ -216,6 +216,16 @@ class TerminalSession:
             raise ValueError("Directory entry is not available.")
         self._send_visible_terminal_input(f"cd {_posix_shell_quote(name)}\r".encode("utf-8"))
 
+    def enter_parent_directory(self) -> None:
+        with self._lock:
+            shell_ready = self._cwd_sync_enabled and self._shell_prompt_ready
+            cwd = self._current_working_directory
+        if not shell_ready:
+            raise RuntimeError("The remote shell prompt is not ready.")
+        if not cwd or cwd == "/":
+            raise ValueError("Current directory has no parent directory.")
+        self._send_visible_terminal_input(b"cd ..\r")
+
     def _send_visible_terminal_input(self, data: bytes) -> None:
         with self._channel_lock:
             if self._channel is None or self.state != "connected":
@@ -615,9 +625,9 @@ class TerminalSession:
             decoded = base64.b64decode(b"".join(payload.split()), validate=True)
             listing_text = decoded.decode("utf-8", errors="replace")
             entries, error = parse_ls_al_listing(listing_text, self._current_working_directory)
-        except (binascii.Error, ValueError) as exc:
+        except (binascii.Error, ValueError):
             entries = []
-            error = f"Could not parse remote directory listing: {exc}"
+            error = "directoryUnreadable"
 
         with self._lock:
             if not self._cwd_sync_enabled:
@@ -771,10 +781,8 @@ def parse_ls_al_listing(listing_text: str, cwd: str) -> tuple[list[dict[str, obj
         else:
             entries.append(entry)
     error = ""
-    if errors and not entries:
-        error = "\n".join(errors)
-    elif errors:
-        error = "Some directory entries could not be parsed."
+    if errors:
+        error = "directoryUnreadable"
     return entries, error
 
 

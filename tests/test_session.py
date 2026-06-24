@@ -167,6 +167,21 @@ def test_hidden_directory_listing_osc_updates_replay_without_terminal_output() -
     assert replay["directory_listing"][1]["link_target"] == "target"
 
 
+def test_hidden_directory_listing_error_uses_unreadable_translation_key() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session._filter_hidden_terminal_output(session._cwd_osc_prefix + b"/srv/app" + CWD_OSC_SUFFIX)
+    payload = base64.b64encode(b"ls: cannot open directory '.': Permission denied\n")
+
+    output = b"before" + session._cwd_listing_osc_prefix + payload + CWD_OSC_SUFFIX + b"after"
+
+    assert session._filter_hidden_terminal_output(output) == b"beforeafter"
+    replay = session.replay_payload()
+    assert replay["directory_listing"] == []
+    assert replay["directory_listing_error"] == "directoryUnreadable"
+
+
 def test_hidden_shell_ready_osc_updates_replay_without_terminal_output() -> None:
     session = TerminalSession(
         ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
@@ -191,6 +206,13 @@ def test_parse_ls_al_listing_marks_directories_not_downloadable() -> None:
     assert entries[0]["downloadable"] is False
     assert entries[1]["type"] == "file"
     assert entries[1]["size"] == 42
+
+
+def test_parse_ls_al_listing_reports_unreadable_directory_for_errors() -> None:
+    entries, error = parse_ls_al_listing("ls: cannot open directory '.': Permission denied\n", "/srv/app")
+
+    assert entries == []
+    assert error == "directoryUnreadable"
 
 
 def test_hidden_terminal_command_echo_is_removed_across_chunks() -> None:
@@ -394,6 +416,47 @@ def test_enter_directory_sends_visible_cd_for_directory_entry() -> None:
     session.enter_directory("it'works")
 
     assert channel.sent == [b"cd 'it'\"'\"'works'\r"]
+    assert session.replay_payload()["shell_ready"] is False
+
+
+def test_enter_parent_directory_rejects_root() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_working_directory = "/"
+
+    try:
+        session.enter_parent_directory()
+    except ValueError as exc:
+        assert "no parent" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_enter_parent_directory_sends_visible_cd_dot_dot() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_working_directory = "/srv/app"
+
+    session.enter_parent_directory()
+
+    assert channel.sent == [b"cd ..\r"]
     assert session.replay_payload()["shell_ready"] is False
 
 

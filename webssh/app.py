@@ -440,6 +440,8 @@ async def _handle_ws_message(session, message: dict) -> None:
             session.set_cwd_sync_enabled(message.get("enabled") is True)
         elif message_type == "enter_directory":
             session.enter_directory(str(message.get("name", "")))
+        elif message_type == "enter_parent_directory":
+            session.enter_parent_directory()
         elif message_type == "disconnect":
             session.close("Browser requested SSH disconnect.")
         elif message_type == "ping":

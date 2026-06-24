@@ -29,6 +29,7 @@ const cwdSyncInput = document.querySelector("#cwd-sync");
 const directoryPanel = document.querySelector("#directory-panel");
 const directoryPanelToggle = document.querySelector("#directory-panel-toggle");
 const directoryPanelCwd = document.querySelector("#directory-panel-cwd");
+const directoryUpButton = document.querySelector("#directory-up-button");
 const directoryPanelMessage = document.querySelector("#directory-panel-message");
 const directoryTableBody = document.querySelector("#directory-table-body");
 const downloadProgress = document.querySelector("#download-progress");
@@ -91,6 +92,8 @@ const translations = {
     fileModified: "Modified",
     fileAction: "Action",
     directoryEntryUnavailable: "Unavailable",
+    directoryUnreadable: "Directory structure is unreadable.",
+    directoryUp: "UP",
     enterDirectory: "Enter Dir",
     shellNotReady: "Shell prompt is not ready.",
     waitingDownload: "Waiting for download",
@@ -190,6 +193,8 @@ const translations = {
     fileModified: "修改时间",
     fileAction: "操作",
     directoryEntryUnavailable: "不可用",
+    directoryUnreadable: "目录结构不可读",
+    directoryUp: "UP",
     enterDirectory: "进入目录",
     shellNotReady: "Shell 提示符尚未就绪。",
     waitingDownload: "等待下载",
@@ -346,6 +351,7 @@ directoryPanelToggle.addEventListener("click", () => {
   const isCollapsed = directoryPanel.classList.toggle("collapsed");
   directoryPanelToggle.setAttribute("aria-expanded", String(!isCollapsed));
 });
+directoryUpButton.addEventListener("click", enterParentDirectory);
 cancelDownloadButton.addEventListener("click", cancelActiveDownload);
 
 term.onData((data) => {
@@ -541,6 +547,15 @@ function enterDirectory(entry) {
     return;
   }
   ws.send(JSON.stringify({ type: "enter_directory", name: entry.name || "" }));
+}
+
+function enterParentDirectory() {
+  if (!directoryUpEnabled() || activeDownload) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    appendLogLine(t("notConnected"));
+    return;
+  }
+  ws.send(JSON.stringify({ type: "enter_parent_directory" }));
 }
 
 async function startDownload(remotePath) {
@@ -1169,6 +1184,7 @@ function setDirectoryListing(entries, error, loading) {
 
 function renderDirectoryPanel() {
   directoryPanelCwd.value = cwdSyncEnabled ? currentWorkingDirectory : "";
+  directoryUpButton.disabled = !directoryUpEnabled() || Boolean(activeDownload);
   directoryTableBody.textContent = "";
   if (!cwdSyncEnabled) {
     directoryPanelMessage.textContent = t("cwdSyncDisabledHint");
@@ -1181,7 +1197,7 @@ function renderDirectoryPanel() {
   if (directoryListingLoading) {
     directoryPanelMessage.textContent = t("directoryLoading");
   } else if (directoryListingError) {
-    directoryPanelMessage.textContent = directoryListingError;
+    directoryPanelMessage.textContent = t(directoryListingError);
   } else if (!currentDirectoryEntries.length) {
     directoryPanelMessage.textContent = t("directoryEmpty");
   } else {
@@ -1256,6 +1272,10 @@ function setWebSocketState(state) {
 
 function directoryEnterEnabled() {
   return shellReady && currentWebSocketState === "open" && currentSessionState === "connected";
+}
+
+function directoryUpEnabled() {
+  return directoryEnterEnabled() && currentWorkingDirectory && currentWorkingDirectory !== "/";
 }
 
 function updateSessionActionButtons() {

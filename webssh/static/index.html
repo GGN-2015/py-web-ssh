@@ -208,7 +208,10 @@
                 </div>
                 <label>
                   <span data-i18n="currentDirectory">Current directory</span>
-                  <input id="directory-panel-cwd" readonly />
+                  <div class="directory-cwd-row">
+                    <input id="directory-panel-cwd" readonly />
+                    <button id="directory-up-button" type="button" data-i18n="directoryUp">UP</button>
+                  </div>
                 </label>
                 <p id="directory-panel-message" class="panel-help"></p>
                 <div class="directory-table-wrap">

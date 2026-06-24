@@ -496,6 +496,18 @@ progress {
   padding: 10px;
 }
 
+.directory-cwd-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.directory-cwd-row button {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
 .directory-panel.collapsed .directory-panel-body {
   display: none;
 }
