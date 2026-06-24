@@ -324,7 +324,6 @@ cwdSyncInput.addEventListener("change", () => {
 directoryPanelToggle.addEventListener("click", () => {
   const isCollapsed = directoryPanel.classList.toggle("collapsed");
   directoryPanelToggle.setAttribute("aria-expanded", String(!isCollapsed));
-  window.setTimeout(() => fitAddon.fit(), 0);
 });
 cancelDownloadButton.addEventListener("click", cancelActiveDownload);
 

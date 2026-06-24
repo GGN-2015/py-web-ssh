@@ -225,13 +225,26 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     script = Path("webssh/static/app.js").read_text(encoding="utf-8")
 
     assert 'id="directory-panel"' in markup
+    assert 'id="directory-panel" class="directory-panel collapsed"' in markup
     assert 'id="directory-panel-toggle"' in markup
+    assert 'aria-expanded="false"' in markup
     assert 'id="directory-panel-cwd"' in markup
     assert 'id="directory-table-body"' in markup
     assert 'id="download-progress"' in markup
     assert 'id="cancel-download"' in markup
+    assert "--directory-tab-width: 42px;" in styles
+    assert ".terminal-layout {\n  position: relative;" in styles
+    assert "padding-right: var(--directory-tab-width);" in styles
+    assert "grid-template-columns: minmax(0, 1fr) 380px;" not in styles
+    assert ".directory-panel {\n  position: absolute;" in styles
+    assert "right: 0;" in styles
+    assert "width: min(50vw, 720px);" in styles
+    assert "z-index: 4;" in styles
     assert ".directory-panel.collapsed" in styles
+    assert "width: var(--directory-tab-width);" in styles
+    assert "box-shadow: none;" in styles
     assert ".directory-panel.busy" in styles
+    assert "window.setTimeout(() => fitAddon.fit(), 0);" not in script
     assert 'cwdSyncDisabledHint: "Enable CWD Sync to display content."' in script
     assert 'cwdSyncDisabledHint: "启用 CWD Sync 以显示内容。"' in script
     assert 'message.type === "directory_listing"' in script

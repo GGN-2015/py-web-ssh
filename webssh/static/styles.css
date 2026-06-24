@@ -9,6 +9,7 @@
   --accent: #4aa3ff;
   --accent-2: #37c592;
   --danger: #ff6b6b;
+  --directory-tab-width: 42px;
 }
 
 * {
@@ -433,11 +434,11 @@ progress {
 }
 
 .terminal-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 8px;
+  position: relative;
   height: calc(100vh - 68px);
   min-height: 0;
+  overflow: hidden;
+  padding-right: var(--directory-tab-width);
 }
 
 #terminal {
@@ -447,18 +448,27 @@ progress {
 }
 
 .directory-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
   display: grid;
   grid-template-rows: 38px minmax(0, 1fr);
-  min-width: 0;
+  width: min(50vw, 720px);
+  min-width: min(420px, calc(100% - 56px));
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface);
+  box-shadow: -20px 0 40px rgba(0, 0, 0, 0.28);
 }
 
 .directory-panel.collapsed {
   grid-template-rows: minmax(0, 1fr);
-  width: 42px;
+  width: var(--directory-tab-width);
+  min-width: var(--directory-tab-width);
+  box-shadow: none;
 }
 
 .directory-panel-toggle {
@@ -628,9 +638,7 @@ progress {
   }
 
   .terminal-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(220px, 34vh);
-    height: auto;
+    height: 52vh;
   }
 
   #terminal {
@@ -638,15 +646,16 @@ progress {
   }
 
   .directory-panel {
-    min-height: 220px;
+    width: min(88vw, 520px);
+    min-width: min(320px, calc(100% - 48px));
   }
 
   .directory-panel.collapsed {
-    width: auto;
-    min-height: 38px;
+    width: var(--directory-tab-width);
+    min-width: var(--directory-tab-width);
   }
 
   .directory-panel.collapsed .directory-panel-toggle {
-    writing-mode: horizontal-tb;
+    writing-mode: vertical-rl;
   }
 }
