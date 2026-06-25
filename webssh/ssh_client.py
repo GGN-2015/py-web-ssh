@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 from functools import lru_cache
 import hashlib
 import io
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 import paramiko
+from cryptography.hazmat.primitives import hashes
 
 from .models import ConnectRequest
 
@@ -21,6 +23,7 @@ AlgorithmMap = dict[str, tuple[str, ...]]
 ALGORITHM_GROUPS = ("kex", "ciphers", "digests", "key_types", "pubkeys")
 PREFERRED_PRIVATE_KEY_CLASS_NAMES = ("Ed25519Key", "ECDSAKey", "RSAKey", "DSSKey")
 IGNORED_PRIVATE_KEY_CLASS_NAMES = {"AgentKey", "PKey"}
+IN_MEMORY_RSA_KEY_BITS = 2048
 ALGORITHM_GROUP_LABELS = {
     "kex": "Key exchange",
     "ciphers": "Ciphers",
@@ -83,6 +86,25 @@ BROAD_ALGORITHM_ORDER: AlgorithmMap = {
 }
 
 
+class LegacyRSAKey(paramiko.RSAKey):
+    HASHES = {
+        **paramiko.RSAKey.HASHES,
+        "ssh-rsa": hashes.SHA1,
+        "ssh-rsa-cert-v01@openssh.com": hashes.SHA1,
+    }
+
+
+def _as_legacy_rsa_key(key: paramiko.PKey) -> paramiko.PKey:
+    if isinstance(key, LegacyRSAKey) or not isinstance(key, paramiko.RSAKey):
+        return key
+    wrapped = LegacyRSAKey(key=key.key)
+    wrapped.public_blob = getattr(key, "public_blob", None)
+    return wrapped
+
+
+IN_MEMORY_RSA_KEY = _as_legacy_rsa_key(paramiko.RSAKey.generate(IN_MEMORY_RSA_KEY_BITS))
+
+
 @dataclass
 class ConnectedClient:
     client: paramiko.SSHClient
@@ -136,6 +158,7 @@ def connect_ssh(
     sock = socket.create_connection((config.host, config.port), timeout=config.timeout_seconds)
     try:
         transport = paramiko.Transport(sock, disabled_algorithms={})
+        _enable_legacy_rsa_algorithms(transport)
         _prepare_security_options(transport, config.disabled_algorithms, log)
 
         log("info", f"Starting SSH handshake with {config.host}:{config.port}.", None)
@@ -165,7 +188,8 @@ def connect_ssh(
         client._transport = transport  # Paramiko exposes no public constructor for this case.
         log("info", "SSH authentication succeeded.", None)
         return ConnectedClient(client=client, transport=transport)
-    except Exception:
+    except Exception as exc:
+        _log_connection_failure(exc, config, log)
         sock.close()
         raise
 
@@ -192,6 +216,7 @@ def get_supported_algorithms() -> AlgorithmMap:
     try:
         sock, peer = socket.socketpair()
         transport = paramiko.Transport(sock, disabled_algorithms={})
+        _enable_legacy_rsa_algorithms(transport)
         options = transport.get_security_options()
         return {
             group: _ordered_supported_algorithms(options, group)
@@ -248,6 +273,7 @@ def _prepare_security_options(
     disabled_algorithms: object,
     log: LogCallback,
 ) -> None:
+    _enable_legacy_rsa_algorithms(transport)
     options = transport.get_security_options()
     disabled = validate_disabled_algorithms(disabled_algorithms)
 
@@ -326,6 +352,17 @@ def _supported_algorithms(options: paramiko.transport.SecurityOptions, attr: str
     return set(getattr(transport, info_attr).keys())
 
 
+def _enable_legacy_rsa_algorithms(transport: paramiko.Transport) -> None:
+    key_info = getattr(transport, "_key_info", None)
+    if not isinstance(key_info, dict):
+        return
+    if key_info.get("ssh-rsa") is LegacyRSAKey:
+        return
+    transport._key_info = dict(key_info)
+    transport._key_info.setdefault("ssh-rsa", LegacyRSAKey)
+    transport._key_info.setdefault("ssh-rsa-cert-v01@openssh.com", LegacyRSAKey)
+
+
 def _authenticate(transport: paramiko.Transport, config: ConnectRequest, log: LogCallback) -> None:
     username = config.username
     errors: list[str] = []
@@ -336,25 +373,60 @@ def _authenticate(transport: paramiko.Transport, config: ConnectRequest, log: Lo
 
     if config.private_key:
         try:
-            pkey = _load_private_key(config.private_key, config.private_key_passphrase)
-            log("info", f"Trying private key authentication using {pkey.get_name()}.", None)
-            transport.auth_publickey(username, pkey)
+            pkey = _as_legacy_rsa_key(
+                _load_private_key(config.private_key, config.private_key_passphrase)
+            )
+            if _try_publickey_auth(
+                transport,
+                username,
+                pkey,
+                log,
+                errors,
+                attempt_name="private key",
+                info_message=f"Trying private key authentication using {pkey.get_name()}.",
+                failure_message="Private key authentication failed",
+            ):
+                return
         except Exception as exc:
             errors.append(f"private key: {exc}")
             log("warning", f"Private key authentication failed: {exc}", traceback.format_exc())
-        if transport.is_authenticated():
-            return
 
     if config.look_for_keys:
         for key in _load_default_private_keys(config.private_key_passphrase, log):
-            try:
-                log("info", f"Trying local key file {key.get_name()}.", None)
-                transport.auth_publickey(username, key)
-            except Exception as exc:
-                errors.append(f"local key {key.get_name()}: {exc}")
-                log("debug", f"Local key failed: {exc}", None)
-            if transport.is_authenticated():
+            key = _as_legacy_rsa_key(key)
+            if _try_publickey_auth(
+                transport,
+                username,
+                key,
+                log,
+                errors,
+                attempt_name=f"local key {key.get_name()}",
+                info_message=f"Trying local key file {key.get_name()}.",
+                failure_message="Local key failed",
+                failure_level="debug",
+            ):
                 return
+
+    if _should_try_in_memory_rsa_key(config, transport):
+        key = IN_MEMORY_RSA_KEY
+        if _server_selected_rsa_host_key(transport):
+            log(
+                "info",
+                "Server selected an RSA host key; enabling in-memory RSA auth fallback.",
+                f"host_key_type={transport.host_key_type}",
+            )
+        if _try_publickey_auth(
+            transport,
+            username,
+            key,
+            log,
+            errors,
+            attempt_name="in-memory RSA key",
+            info_message="Trying in-memory fallback RSA key authentication.",
+            failure_message="In-memory fallback RSA key authentication failed",
+            details=_public_key_details(key),
+        ):
+            return
 
     if config.password is not None:
         try:
@@ -386,6 +458,15 @@ def _should_try_none_auth_first(config: ConnectRequest) -> bool:
     return not config.password and not config.private_key and not config.look_for_keys
 
 
+def _should_try_in_memory_rsa_key(
+    config: ConnectRequest,
+    transport: paramiko.Transport,
+) -> bool:
+    if config.password is not None or config.private_key:
+        return False
+    return "ssh-rsa" in _transport_pubkey_algorithms(transport)
+
+
 def _try_none_auth(
     transport: paramiko.Transport,
     username: str,
@@ -399,6 +480,111 @@ def _try_none_auth(
         errors.append(f"none: {exc}")
         log("debug", f"None authentication failed: {exc}", None)
     return transport.is_authenticated()
+
+
+def _try_publickey_auth(
+    transport: paramiko.Transport,
+    username: str,
+    key: paramiko.PKey,
+    log: LogCallback,
+    errors: list[str],
+    *,
+    attempt_name: str,
+    info_message: str,
+    failure_message: str,
+    failure_level: str = "warning",
+    details: str | None = None,
+) -> bool:
+    try:
+        log("info", info_message, details)
+        transport.auth_publickey(username, key)
+    except Exception as exc:
+        errors.append(f"{attempt_name}: {exc}")
+        log_details = None if failure_level == "debug" else traceback.format_exc()
+        log(failure_level, f"{failure_message}: {exc}", log_details)
+        if _retry_publickey_auth_with_ssh_rsa(
+            transport,
+            username,
+            key,
+            log,
+            errors,
+            attempt_name=attempt_name,
+        ):
+            return True
+    return transport.is_authenticated()
+
+
+def _retry_publickey_auth_with_ssh_rsa(
+    transport: paramiko.Transport,
+    username: str,
+    key: paramiko.PKey,
+    log: LogCallback,
+    errors: list[str],
+    *,
+    attempt_name: str,
+) -> bool:
+    if not _can_retry_with_ssh_rsa(transport, key):
+        return False
+    try:
+        with _prefer_ssh_rsa_pubkey(transport):
+            log(
+                "info",
+                "Retrying RSA public key authentication with legacy ssh-rsa signatures.",
+                None,
+            )
+            transport.auth_publickey(username, key)
+    except Exception as exc:
+        errors.append(f"{attempt_name} ssh-rsa retry: {exc}")
+        log("debug", f"Legacy ssh-rsa public key retry failed: {exc}", None)
+    return transport.is_authenticated()
+
+
+def _can_retry_with_ssh_rsa(transport: paramiko.Transport, key: paramiko.PKey) -> bool:
+    if not isinstance(key, paramiko.RSAKey):
+        return False
+    if transport.is_authenticated():
+        return False
+    algorithms = _transport_pubkey_algorithms(transport)
+    return "ssh-rsa" in algorithms and algorithms[:1] != ("ssh-rsa",)
+
+
+@contextmanager
+def _prefer_ssh_rsa_pubkey(transport: paramiko.Transport):
+    original = tuple(getattr(transport, "_preferred_pubkeys", ()))
+    if not original:
+        yield
+        return
+    transport._preferred_pubkeys = ("ssh-rsa",) + tuple(
+        algorithm for algorithm in original if algorithm != "ssh-rsa"
+    )
+    try:
+        yield
+    finally:
+        transport._preferred_pubkeys = original
+
+
+def _transport_pubkey_algorithms(transport: paramiko.Transport) -> tuple[str, ...]:
+    algorithms = getattr(transport, "preferred_pubkeys", None)
+    if algorithms is None:
+        algorithms = getattr(transport, "_preferred_pubkeys", ())
+    return tuple(algorithms)
+
+
+def _server_selected_rsa_host_key(transport: paramiko.Transport) -> bool:
+    return "rsa" in str(getattr(transport, "host_key_type", ""))
+
+
+def _public_key_details(key: paramiko.PKey) -> str:
+    key_bytes = key.asbytes()
+    sha256_digest = hashlib.sha256(key_bytes).digest()
+    sha256_value = base64.b64encode(sha256_digest).decode("ascii").rstrip("=")
+    return "\n".join(
+        [
+            f"type={key.get_name()}",
+            f"bits={getattr(key, 'get_bits', lambda: 0)()}",
+            f"sha256=SHA256:{sha256_value}",
+        ]
+    )
 
 
 def _load_private_key(text: str, passphrase: str | None) -> paramiko.PKey:
@@ -451,3 +637,50 @@ def _load_default_private_keys(passphrase: str | None, log: LogCallback) -> list
         except Exception as exc:
             log("debug", f"Could not load local key {path}: {exc}", None)
     return keys
+
+
+def _log_connection_failure(
+    exc: BaseException,
+    config: ConnectRequest,
+    log: LogCallback,
+) -> None:
+    if _exception_text_contains(exc, "Error reading SSH protocol banner"):
+        log(
+            "error",
+            "SSH protocol banner was not received from the target.",
+            (
+                f"target={config.host}:{config.port}\n"
+                "This usually means the target port is not an SSH service, "
+                "the server closed the TCP connection before sending its SSH banner, "
+                "or a network device interrupted the connection."
+            ),
+        )
+    elif _exception_text_contains(exc, "no acceptable host key"):
+        log(
+            "error",
+            "SSH host key algorithm negotiation failed.",
+            (
+                "The server did not offer any host key algorithm enabled in py-web-ssh. "
+                "For old RSA-only servers, keep ssh-rsa enabled in the Algorithms panel."
+            ),
+        )
+
+
+def _exception_text_contains(exc: BaseException, text: str) -> bool:
+    needle = text.lower()
+    seen: set[int] = set()
+    pending: list[BaseException] = [exc]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if needle in str(current).lower():
+            return True
+        cause = getattr(current, "__cause__", None)
+        context = getattr(current, "__context__", None)
+        if isinstance(cause, BaseException):
+            pending.append(cause)
+        if isinstance(context, BaseException):
+            pending.append(context)
+    return False
