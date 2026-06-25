@@ -64,7 +64,7 @@ Returns public, non-sensitive runtime configuration:
   "branding": {
     "title": "py-web-ssh",
     "subtitle": "Web SSH Client",
-    "version": "0.1.53"
+    "version": "0.1.54"
   },
   "locks": {
     "host": {"enabled": false, "value": null},

@@ -137,6 +137,7 @@ class TerminalSession:
         self._hidden_command_echoes: list[bytes] = []
         self._hidden_terminal_transaction_active = False
         self._hidden_terminal_transaction_closing = False
+        self._hidden_terminal_transaction_suppress_final_prompt = True
         self._last_client_detached_at: float | None = self._clock()
         self._reaped = False
 
@@ -277,7 +278,7 @@ class TerminalSession:
         with self._lock:
             self._refresh_directory_listing_when_shell_ready = True
 
-    def refresh_directory_listing_if_shell_ready(self) -> bool:
+    def refresh_directory_listing_if_shell_ready(self, suppress_final_prompt: bool = True) -> bool:
         with self._lock:
             can_refresh = (
                 self._cwd_sync_enabled
@@ -300,7 +301,10 @@ class TerminalSession:
             return False
         self._broadcast(shell_ready_payload)
         self._broadcast(listing_payload)
-        self._send_hidden_terminal_command(CWD_REFRESH_LISTING_COMMAND_TEMPLATE)
+        self._send_hidden_terminal_command(
+            CWD_REFRESH_LISTING_COMMAND_TEMPLATE,
+            suppress_final_prompt=suppress_final_prompt,
+        )
         return True
 
     def refresh_directory_listing_visible(self) -> None:
@@ -333,7 +337,7 @@ class TerminalSession:
             if pending:
                 self._refresh_directory_listing_when_shell_ready = False
         if pending:
-            self.refresh_directory_listing_if_shell_ready()
+            self.refresh_directory_listing_if_shell_ready(suppress_final_prompt=False)
 
     def _send_visible_terminal_input(self, data: bytes) -> None:
         with self._channel_lock:
@@ -481,10 +485,14 @@ class TerminalSession:
         except Exception as exc:
             self.log("warning", f"Could not start remote working-directory monitor: {exc}", None)
 
-    def _send_hidden_terminal_command(self, command: str) -> None:
-        self._send_hidden_terminal_commands([command])
+    def _send_hidden_terminal_command(self, command: str, suppress_final_prompt: bool = True) -> None:
+        self._send_hidden_terminal_commands([command], suppress_final_prompt=suppress_final_prompt)
 
-    def _send_hidden_terminal_commands(self, commands: list[str]) -> None:
+    def _send_hidden_terminal_commands(
+        self,
+        commands: list[str],
+        suppress_final_prompt: bool = True,
+    ) -> None:
         if not commands:
             return
         payload = "".join(f"{command}\n" for command in commands).encode("utf-8")
@@ -494,6 +502,7 @@ class TerminalSession:
             with self._lock:
                 self._hidden_terminal_transaction_active = True
                 self._hidden_terminal_transaction_closing = False
+                self._hidden_terminal_transaction_suppress_final_prompt = suppress_final_prompt
                 self._hidden_command_echoes.clear()
                 self._hidden_echo_filter_buffer = b""
             self._channel.sendall(payload)
@@ -611,8 +620,10 @@ class TerminalSession:
         with self._lock:
             if not self._hidden_terminal_transaction_active:
                 return
+            suppress_final_prompt = self._hidden_terminal_transaction_suppress_final_prompt
             self._hidden_terminal_transaction_active = False
-            self._hidden_terminal_transaction_closing = True
+            self._hidden_terminal_transaction_closing = suppress_final_prompt
+            self._hidden_terminal_transaction_suppress_final_prompt = True
             self._hidden_command_echoes.clear()
             self._hidden_echo_filter_buffer = b""
 
@@ -620,6 +631,7 @@ class TerminalSession:
         with self._lock:
             self._hidden_terminal_transaction_active = False
             self._hidden_terminal_transaction_closing = False
+            self._hidden_terminal_transaction_suppress_final_prompt = True
             self._terminal_filter_buffer = b""
             self._hidden_echo_filter_buffer = b""
             self._hidden_command_echoes.clear()

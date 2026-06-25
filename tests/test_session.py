@@ -742,6 +742,53 @@ def test_delete_file_refreshes_directory_listing_when_shell_becomes_ready() -> N
     assert session._hidden_terminal_transaction_closing is False
 
 
+def test_delete_file_hidden_refresh_preserves_final_prompt() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_working_directory = "/srv/app"
+    session._current_directory_listing = [{"name": "old.log", "type": "file"}]
+
+    session.delete_file("old.log")
+    rm_prompt = session._cwd_ready_osc_prefix + b"1" + CWD_OSC_SUFFIX + b"root@example:/srv/app$ "
+
+    assert session._filter_hidden_terminal_output(rm_prompt) == b""
+    assert channel.sent == [
+        b"rm -- 'old.log'\r",
+        b"__py_web_ssh_cwd_armed=1; __py_web_ssh_cwd_list; __py_web_ssh_cwd_ready\n",
+    ]
+
+    listing = base64.b64encode(b"total 0\n-rw-r--r-- 1 root root 0 Jun 25 12:00 fresh.log\n")
+    hidden_refresh_done = (
+        session._cwd_listing_osc_prefix
+        + listing
+        + CWD_OSC_SUFFIX
+        + session._cwd_ready_osc_prefix
+        + b"1"
+        + CWD_OSC_SUFFIX
+        + b"root@example:/srv/app$ "
+    )
+
+    assert session._filter_hidden_terminal_output(hidden_refresh_done) == b"root@example:/srv/app$ "
+    replay = session.replay_payload()
+    assert replay["shell_ready"] is True
+    assert [entry["name"] for entry in replay["directory_listing"]] == ["fresh.log"]
+    assert session._hidden_terminal_transaction_active is False
+    assert session._hidden_terminal_transaction_closing is False
+
+
 def test_posix_cwd_monitor_does_not_override_cd_function() -> None:
     assert "PS1=" in CWD_INSTALL_COMMAND_TEMPLATE
     assert "PS2=" in CWD_INSTALL_COMMAND_TEMPLATE
