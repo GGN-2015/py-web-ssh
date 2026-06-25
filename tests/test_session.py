@@ -12,6 +12,7 @@ from webssh.session import (
     TerminalSession,
     cwd_install_commands,
     parse_ls_al_listing,
+    parse_visible_ls_al_output,
 )
 from webssh.ssh_client import HostKeyInfo
 
@@ -631,6 +632,80 @@ def test_refresh_directory_listing_sends_hidden_ls_when_shell_ready() -> None:
     assert session.replay_payload()["shell_ready"] is False
     replay = session.replay_payload()
     assert replay["directory_listing"] == []
+
+
+def test_visible_directory_refresh_sends_ls_and_rebuilds_listing_on_ready() -> None:
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def sendall(self, data: bytes) -> None:
+            self.sent.append(data)
+
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    channel = FakeChannel()
+    session._channel = channel  # type: ignore[assignment]
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = True
+    session._current_working_directory = "/srv/app"
+    session._current_directory_listing = [{"name": "old.log", "type": "file"}]
+
+    session.refresh_directory_listing_visible()
+
+    assert channel.sent == [b"ls -al\r"]
+    assert session.replay_payload()["shell_ready"] is False
+    assert session.replay_payload()["directory_listing"] == []
+
+    terminal_output = (
+        b"root@example:/srv/app$ ls -al\r\n"
+        b"total 8\r\n"
+        b"drwxr-xr-x 2 root root 4096 Jun 25 12:00 demo-dir\r\n"
+        b"-rw-r--r-- 1 root root 12 Jun 25 12:00 demo.txt\r\n"
+        + session._cwd_ready_osc_prefix
+        + b"1"
+        + CWD_OSC_SUFFIX
+        + b"root@example:/srv/app$ "
+    )
+
+    visible = session._filter_hidden_terminal_output(terminal_output)
+
+    assert b"ls -al" in visible
+    replay = session.replay_payload()
+    assert replay["shell_ready"] is True
+    assert [entry["name"] for entry in replay["directory_listing"]] == ["demo-dir", "demo.txt"]
+
+
+def test_visible_directory_refresh_requires_shell_prompt_ready() -> None:
+    session = TerminalSession(
+        ConnectRequest(host="example.com", username="root", scrollback_bytes=100_000)
+    )
+    session.state = "connected"
+    session._cwd_sync_enabled = True
+    session._shell_prompt_ready = False
+
+    try:
+        session.refresh_directory_listing_visible()
+    except RuntimeError as exc:
+        assert "prompt" in str(exc)
+    else:
+        raise AssertionError("visible refresh should require a ready shell prompt")
+
+
+def test_parse_visible_ls_al_output_skips_prompt_and_command_echo() -> None:
+    entries, error = parse_visible_ls_al_output(
+        "root@example:/srv/app$ ls -al\r\n"
+        "total 8\r\n"
+        "drwxr-xr-x 2 root root 4096 Jun 25 12:00 src\r\n"
+        "-rw-r--r-- 1 root root 42 Jun 25 12:00 app.py\r\n"
+        "root@example:/srv/app$ ",
+        "/srv/app",
+    )
+
+    assert error == ""
+    assert [entry["name"] for entry in entries] == ["src", "app.py"]
 
 
 def test_delete_file_refreshes_directory_listing_when_shell_becomes_ready() -> None:

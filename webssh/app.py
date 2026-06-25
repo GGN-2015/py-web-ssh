@@ -444,6 +444,8 @@ async def _handle_ws_message(session, message: dict) -> None:
             session.enter_directory(str(message.get("name", "")))
         elif message_type == "enter_parent_directory":
             session.enter_parent_directory()
+        elif message_type == "refresh_directory":
+            session.refresh_directory_listing_visible()
         elif message_type == "delete_file":
             session.delete_file(str(message.get("name", "")))
         elif message_type == "disconnect":

@@ -198,6 +198,26 @@ def test_websocket_can_request_enter_parent_directory(monkeypatch) -> None:
     assert called == [True]
 
 
+def test_websocket_can_request_visible_directory_refresh(monkeypatch) -> None:
+    manager = NoStartSessionManager(autostart_reaper=False)
+    monkeypatch.setattr(app_module, "sessions", manager)
+    client = TestClient(app)
+
+    response = client.post("/api/sessions", json={"host": "example.com", "username": "root"})
+    session_id = response.json()["session_id"]
+    session = manager.get(session_id)
+    assert session is not None
+    called: list[bool] = []
+    monkeypatch.setattr(session, "refresh_directory_listing_visible", lambda: called.append(True))
+
+    with client.websocket_connect(f"/ws/sessions/{session_id}") as websocket:
+        websocket.receive_json()
+        websocket.receive_json()
+        websocket.send_json({"type": "refresh_directory"})
+
+    assert called == [True]
+
+
 def test_websocket_can_request_delete_file(monkeypatch) -> None:
     manager = NoStartSessionManager(autostart_reaper=False)
     monkeypatch.setattr(app_module, "sessions", manager)

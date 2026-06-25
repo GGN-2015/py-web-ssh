@@ -29,6 +29,7 @@ const cwdSyncInput = document.querySelector("#cwd-sync");
 const directoryPanel = document.querySelector("#directory-panel");
 const directoryPanelToggle = document.querySelector("#directory-panel-toggle");
 const directoryPanelCwd = document.querySelector("#directory-panel-cwd");
+const directoryRefreshButton = document.querySelector("#directory-refresh-button");
 const directoryUpButton = document.querySelector("#directory-up-button");
 const directoryPanelMessage = document.querySelector("#directory-panel-message");
 const directoryVisibleTableBody = document.querySelector("#directory-visible-table-body");
@@ -104,6 +105,7 @@ const translations = {
     fileAction: "Action",
     directoryEntryUnavailable: "Unavailable",
     directoryUnreadable: "Directory structure is unreadable.",
+    directoryRefresh: "Refresh",
     directoryUp: "UP",
     enterDirectory: "Enter Dir",
     deleteFile: "Delete",
@@ -215,6 +217,7 @@ const translations = {
     fileAction: "操作",
     directoryEntryUnavailable: "不可用",
     directoryUnreadable: "目录结构不可读",
+    directoryRefresh: "刷新",
     directoryUp: "UP",
     enterDirectory: "进入目录",
     deleteFile: "删除",
@@ -380,6 +383,7 @@ directoryPanelToggle.addEventListener("click", () => {
   const isCollapsed = directoryPanel.classList.toggle("collapsed");
   directoryPanelToggle.setAttribute("aria-expanded", String(!isCollapsed));
 });
+directoryRefreshButton.addEventListener("click", refreshDirectoryPanel);
 directoryUpButton.addEventListener("click", enterParentDirectory);
 cancelDownloadButton.addEventListener("click", cancelActiveDownload);
 confirmDialogCancel.addEventListener("click", () => resolveConfirmDialog(false));
@@ -617,6 +621,17 @@ function enterParentDirectory() {
     return;
   }
   ws.send(JSON.stringify({ type: "enter_parent_directory" }));
+}
+
+function refreshDirectoryPanel() {
+  if (!directoryRefreshEnabled() || activeDownload) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    appendLogLine(t("notConnected"));
+    return;
+  }
+  ws.send(JSON.stringify({ type: "refresh_directory" }));
+  setDirectoryListing([], "", true);
+  setShellReady(false);
 }
 
 async function deleteDirectoryFile(entry) {
@@ -1296,6 +1311,7 @@ function resetDirectoryState() {
 
 function renderDirectoryPanel() {
   directoryPanelCwd.value = cwdSyncEnabled ? currentWorkingDirectory : "";
+  directoryRefreshButton.disabled = !directoryRefreshEnabled() || Boolean(activeDownload);
   directoryUpButton.disabled = !directoryUpEnabled() || Boolean(activeDownload);
   directoryVisibleTableBody.textContent = "";
   directoryHiddenTableBody.textContent = "";
@@ -1427,6 +1443,10 @@ function directoryDeleteEnabled(entry) {
 
 function directoryUpEnabled() {
   return directoryEnterEnabled() && currentWorkingDirectory && currentWorkingDirectory !== "/";
+}
+
+function directoryRefreshEnabled() {
+  return directoryEnterEnabled() && Boolean(currentWorkingDirectory);
 }
 
 function updateSessionActionButtons() {

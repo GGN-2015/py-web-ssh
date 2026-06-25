@@ -312,6 +312,7 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'directoryUnreadable: "目录结构不可读"' in script
     assert 'visibleFiles: "Visible files"' in script
     assert 'hiddenFiles: "Hidden files"' in script
+    assert 'directoryRefresh: "Refresh"' in script
     assert 'visibleFiles: "可见文件"' in script
     assert 'hiddenFiles: "隐藏文件"' in script
     assert 'directoryUp: "UP"' in script
@@ -324,12 +325,15 @@ def test_terminal_directory_panel_uses_cwd_sync_listing_and_download_progress() 
     assert 'message.type === "shell_ready"' in script
     assert "function enterDirectory(entry)" in script
     assert "function enterParentDirectory()" in script
+    assert "function refreshDirectoryPanel()" in script
     assert "function deleteDirectoryFile(entry)" in script
+    assert "function directoryRefreshEnabled()" in script
     assert "function directoryUpEnabled()" in script
     assert "function directoryDeleteEnabled(entry)" in script
     assert "function directoryEnterEnabled()" in script
     assert 'ws.send(JSON.stringify({ type: "enter_directory", name: entry.name || "" }));' in script
     assert 'ws.send(JSON.stringify({ type: "enter_parent_directory" }));' in script
+    assert 'ws.send(JSON.stringify({ type: "refresh_directory" }));' in script
     assert 'ws.send(JSON.stringify({ type: "delete_file", name: entry.name || "" }));' in script
     assert 'setShellReady(false);' in script
     assert 'const isDirectory = entry.type === "directory";' in script

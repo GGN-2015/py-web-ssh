@@ -607,7 +607,7 @@ progress {
 
 .directory-cwd-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
 }
@@ -615,6 +615,13 @@ progress {
 .directory-cwd-row button {
   min-height: 34px;
   padding: 0 10px;
+}
+
+#directory-refresh-button {
+  border-color: #38b7ff;
+  background:
+    linear-gradient(180deg, #155b7a, #0a3045);
+  color: #e8fbff;
 }
 
 #directory-up-button {

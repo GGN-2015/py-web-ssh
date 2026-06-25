@@ -4,6 +4,7 @@ import asyncio
 import base64
 import binascii
 import posixpath
+import re
 import threading
 import time
 import traceback
@@ -67,6 +68,9 @@ CWD_INITIAL_REPORT_COMMAND_TEMPLATE = "__py_web_ssh_cwd_armed=1; " + CWD_REPORT_
 CWD_INITIAL_READY_COMMAND_TEMPLATE = "__py_web_ssh_cwd_armed=1; " + CWD_READY_FUNCTION
 CWD_REFRESH_LISTING_COMMAND_TEMPLATE = "__py_web_ssh_cwd_armed=1; " + CWD_LIST_FUNCTION + "; " + CWD_READY_FUNCTION
 CWD_INSTALL_COMMAND_TEMPLATE = "; ".join(CWD_INSTALL_COMMAND_TEMPLATES)
+ANSI_CONTROL_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[PX^_].*?(?:\x1b\\|\x07))"
+)
 
 
 def cwd_install_commands(token: str, cwd_sync_enabled: bool) -> list[str]:
@@ -126,6 +130,8 @@ class TerminalSession:
         self._last_observed_working_directory = ""
         self._shell_prompt_ready = False
         self._refresh_directory_listing_when_shell_ready = False
+        self._visible_directory_refresh_active = False
+        self._visible_directory_refresh_buffer = bytearray()
         self._terminal_filter_buffer = b""
         self._hidden_echo_filter_buffer = b""
         self._hidden_command_echoes: list[bytes] = []
@@ -279,6 +285,7 @@ class TerminalSession:
                 and self.state == "connected"
                 and not self._hidden_terminal_transaction_active
                 and not self._hidden_terminal_transaction_closing
+                and not self._visible_directory_refresh_active
             )
             if can_refresh:
                 self._current_directory_listing = []
@@ -295,6 +302,30 @@ class TerminalSession:
         self._broadcast(listing_payload)
         self._send_hidden_terminal_command(CWD_REFRESH_LISTING_COMMAND_TEMPLATE)
         return True
+
+    def refresh_directory_listing_visible(self) -> None:
+        with self._lock:
+            can_refresh = (
+                self._cwd_sync_enabled
+                and self._shell_prompt_ready
+                and self.state == "connected"
+                and not self._hidden_terminal_transaction_active
+                and not self._hidden_terminal_transaction_closing
+                and not self._visible_directory_refresh_active
+            )
+            if not can_refresh:
+                raise RuntimeError("The remote shell prompt is not ready.")
+            self._current_directory_listing = []
+            self._directory_listing_error = ""
+            self._visible_directory_refresh_active = True
+            self._visible_directory_refresh_buffer = bytearray()
+            listing_payload = self._directory_listing_payload(loading=True)
+        self._broadcast(listing_payload)
+        try:
+            self._send_visible_terminal_input(b"ls -al\r")
+        except Exception:
+            self._cancel_visible_directory_refresh()
+            raise
 
     def _refresh_pending_directory_listing_if_shell_ready(self) -> None:
         with self._lock:
@@ -331,6 +362,8 @@ class TerminalSession:
             self._current_directory_listing = []
             self._directory_listing_error = ""
             self._cwd_sync_waiting_for_change = enabled
+            self._visible_directory_refresh_active = False
+            self._visible_directory_refresh_buffer = bytearray()
             self.updated_at = datetime.now(timezone.utc)
         self._set_shell_prompt_ready(False)
         self._broadcast({"type": "cwd_sync", "enabled": enabled})
@@ -500,16 +533,16 @@ class TerminalSession:
                 tail_length = self._hidden_osc_prefix_tail_length(pending)
                 if tail_length:
                     if not self._hidden_terminal_output_suppressed():
-                        visible.extend(pending[:-tail_length])
+                        self._append_visible_filtered_output(visible, pending[:-tail_length])
                     self._terminal_filter_buffer = pending[-tail_length:]
                 else:
                     if not self._hidden_terminal_output_suppressed():
-                        visible.extend(pending)
+                        self._append_visible_filtered_output(visible, pending)
                 break
 
             kind, prefix, start = marker
             if not self._hidden_terminal_output_suppressed():
-                visible.extend(pending[:start])
+                self._append_visible_filtered_output(visible, pending[:start])
             payload_start = start + len(prefix)
             end = pending.find(CWD_OSC_SUFFIX, payload_start)
             if end < 0:
@@ -525,10 +558,51 @@ class TerminalSession:
             else:
                 self._set_shell_prompt_ready(True)
                 self._finish_hidden_terminal_transaction()
+                self._complete_visible_directory_refresh()
                 self._refresh_pending_directory_listing_if_shell_ready()
             pending = pending[end + len(CWD_OSC_SUFFIX) :]
 
         return self._remove_hidden_command_echoes(bytes(visible))
+
+    def _append_visible_filtered_output(self, visible: bytearray, data: bytes) -> None:
+        if not data:
+            return
+        visible.extend(data)
+        self._capture_visible_directory_refresh_output(data)
+
+    def _capture_visible_directory_refresh_output(self, data: bytes) -> None:
+        with self._lock:
+            if not self._visible_directory_refresh_active:
+                return
+            self._visible_directory_refresh_buffer.extend(data)
+
+    def _complete_visible_directory_refresh(self) -> None:
+        with self._lock:
+            if not self._visible_directory_refresh_active:
+                return
+            data = bytes(self._visible_directory_refresh_buffer)
+            cwd = self._current_working_directory
+            self._visible_directory_refresh_active = False
+            self._visible_directory_refresh_buffer = bytearray()
+        try:
+            listing_text = data.decode("utf-8", errors="replace")
+            entries, error = parse_visible_ls_al_output(listing_text, cwd)
+        except ValueError:
+            entries = []
+            error = "directoryUnreadable"
+        with self._lock:
+            if not self._cwd_sync_enabled:
+                return
+            self._current_directory_listing = entries
+            self._directory_listing_error = error
+            self.updated_at = datetime.now(timezone.utc)
+            payload_message = self._directory_listing_payload()
+        self._broadcast(payload_message)
+
+    def _cancel_visible_directory_refresh(self) -> None:
+        with self._lock:
+            self._visible_directory_refresh_active = False
+            self._visible_directory_refresh_buffer = bytearray()
 
     def _hidden_terminal_output_suppressed(self) -> bool:
         return self._hidden_terminal_transaction_active or self._hidden_terminal_transaction_closing
@@ -820,6 +894,9 @@ class TerminalSession:
         with self._lock:
             self.state = state
             self.updated_at = datetime.now(timezone.utc)
+            if state != "connected":
+                self._visible_directory_refresh_active = False
+                self._visible_directory_refresh_buffer = bytearray()
         if state != "connected":
             self._set_shell_prompt_ready(False)
         self._broadcast({"type": "status", "state": state})
@@ -870,6 +947,38 @@ def parse_ls_al_listing(listing_text: str, cwd: str) -> tuple[list[dict[str, obj
     return entries, error
 
 
+def parse_visible_ls_al_output(output_text: str, cwd: str) -> tuple[list[dict[str, object]], str]:
+    listing_lines: list[str] = []
+    saw_listing_header = False
+    for raw_line in output_text.splitlines():
+        line = _strip_terminal_control_sequences(raw_line).strip()
+        if not line:
+            continue
+        if line == "ls -al" or re.search(r"[$#%>] ls -al$", line):
+            continue
+        if line.startswith("total "):
+            listing_lines.append(line)
+            saw_listing_header = True
+            continue
+        if _parse_ls_al_line(line, cwd) is not None:
+            listing_lines.append(line)
+
+    if not listing_lines and not saw_listing_header:
+        raise ValueError("No ls -al listing was found in terminal output.")
+    return parse_ls_al_listing("\n".join(listing_lines), cwd)
+
+
+def _strip_terminal_control_sequences(value: str) -> str:
+    stripped = ANSI_CONTROL_RE.sub("", value)
+    while "\b" in stripped:
+        rewritten = re.sub(r".\x08", "", stripped)
+        if rewritten == stripped:
+            stripped = stripped.replace("\b", "")
+            break
+        stripped = rewritten
+    return "".join(char for char in stripped if char == "\t" or char >= " ")
+
+
 def _valid_directory_entry_name(name: str) -> str:
     name = str(name)
     if not name or "/" in name or "\x00" in name or name in {".", ".."}:
@@ -886,6 +995,8 @@ def _parse_ls_al_line(line: str, cwd: str) -> dict[str, object] | None:
     if len(parts) < 9:
         return None
     mode, links, owner, group, size, month, day, time_or_year, name_text = parts
+    if not _looks_like_ls_al_mode(mode):
+        return None
     if name_text in {".", ".."}:
         return None
     name = name_text
@@ -923,6 +1034,12 @@ def _file_type_from_mode(mode: str) -> str:
     if mode.startswith("-"):
         return "file"
     return "other"
+
+
+def _looks_like_ls_al_mode(mode: str) -> bool:
+    if len(mode) < 10 or mode[0] not in "-dlcbps":
+        return False
+    return all(char in "rwxXsStT-" for char in mode[1:10])
 
 
 class SessionManager:

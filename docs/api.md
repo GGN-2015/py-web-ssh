@@ -64,7 +64,7 @@ Returns public, non-sensitive runtime configuration:
   "branding": {
     "title": "py-web-ssh",
     "subtitle": "Web SSH Client",
-    "version": "0.1.52"
+    "version": "0.1.53"
   },
   "locks": {
     "host": {"enabled": false, "value": null},
@@ -297,6 +297,7 @@ Browser-to-server messages:
 - `cwd_sync`: `{ "type": "cwd_sync", "enabled": true }`
 - `enter_directory`: `{ "type": "enter_directory", "name": "src" }`
 - `enter_parent_directory`: `{ "type": "enter_parent_directory" }`
+- `refresh_directory`: `{ "type": "refresh_directory" }`
 - `delete_file`: `{ "type": "delete_file", "name": "old.log" }`
 - `disconnect`: `{ "type": "disconnect" }`
 - `ping`: `{ "type": "ping" }`
