@@ -6,11 +6,7 @@
 
 ## 界面展示
 
-以下截图只使用合成演示数据。
-
-![终端与 Directory 面板](https://raw.githubusercontent.com/GGN-2015/py-web-ssh/main/docs/assets/screenshots/terminal-directory.png)
-
-![文件传输进度](https://raw.githubusercontent.com/GGN-2015/py-web-ssh/main/docs/assets/screenshots/file-transfer.png)
+![py-web-ssh 界面总览](https://raw.githubusercontent.com/GGN-2015/py-web-ssh/main/docs/assets/screenshots/interface-overview.png)
 
 ## 快速开始
 
